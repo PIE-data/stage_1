@@ -1,0 +1,16 @@
+     13 LANG_German
+     13 LANG_French
+      7 NOT_FOUND
+      6 LANG_Dutch
+      5 LANG_Portuguese
+      4 TOO_SHORT
+      4 LANG_Italian
+      4 LANG_Finnish
+      3 LANG_Hungarian
+      2 LANG_Spanish
+      1 LANG_Welsh
+      1 LANG_Tagalog
+      1 LANG_Greek
+      1 LANG_English, Spanish
+      1 LANG_Catalan
+      1 LANG_Afrikaans

@@ -18,7 +18,7 @@ stage_1/
 │   └── SPEC.md                     binding cross-language contract
 ├── spec/                           SHARED — identical input for all 3 languages
 │   ├── stopwords_en.txt
-│   ├── corpus/manifest_{100,500,2000}.txt
+│   ├── corpus/manifest_{100,1000,10000}.txt
 │   ├── queries/{single,and2,and3,absent}.txt
 │   └── golden/                     20 books + tokens_20.jsonl + expected.sha256
 ├── src/
@@ -116,12 +116,12 @@ class DatalakeStorage(Protocol):
 
 | ID | Metric (brief's wording) | Varies | Fixed |
 |---|---|---|---|
-| E1 | Download and write throughput | lang × layout | corpus 500, workers ∈ {1,8} |
-| E2 | Lookup cost | lang × layout | 500 seeded lookups, p50/p95 |
-| E3 | Incremental processing | lang × layout | corpus 500, +25 new |
+| E1 | Download and write throughput | lang × layout | corpus 1 000, workers ∈ {1,8} |
+| E2 | Lookup cost | lang × layout | 1 000 seeded lookups, p50/p95 |
+| E3 | Incremental processing | lang × layout | corpus 1 000, +50 new |
 | E4 | Recovery behavior | lang × layout | SIGKILL at 50%, count duplicates/losses |
-| E5 | Storage overhead | layout only | #files, #dirs, bytes, bytes/book |
-| E10 | Scalability | layout × {100,500,2000} | lang = go |
+| E5 | Storage overhead | layout only | corpus 1 000; #files, #dirs, bytes, bytes/book |
+| E10 | Scalability | layout × {100, 1 000, 10 000} | lang = go |
 
 **Protocol:** 3 repetitions, discard the first; median + IQR; one machine, Linux/ext4; clean workspace per run with teardown **excluded** from the timer; local mirror, not live Gutenberg.
 
@@ -205,9 +205,9 @@ Posting: `{book_id, tf, positions[]}` — **word-level**, the deck requires posi
 |---|---|---|
 | E6 | Indexing speed | lang × backend |
 | E7 | Query performance | lang × backend × {single, and2, and3, **absent**} |
-| E8 | Update performance | lang × backend, +25 books onto 500 |
+| E8 | Update performance | lang × backend, +50 books onto 1 000 |
 | E9 | Memory and disk usage | lang × backend, peak RSS + bytes + #files |
-| E11 | Scalability | backend × {100,500,2000}, lang = go |
+| E11 | Scalability | backend × {100, 1 000, 10 000}, lang = go |
 
 **Done when:** 9 identical hashes in CI.
 
@@ -303,7 +303,7 @@ Source is `report/main.tex`. **`report.pdf` is a build artifact — never edit i
 |---|---|
 | Python + **Node** + Go | Node has no build step; saves ~2 person-days vs Java |
 | json + folder + **SQLite** (not Mongo) | Brief permits custom approaches; no external service; cleaner axis: one file vs many files vs B-tree |
-| Corpus **English only**, 100 / 500 / 2000 | One stop-word list; 2000 books ≈ 1 GB, fits an overnight run |
+| Corpus **English only**, 100 / 1 000 / 10 000 | One stop-word list. The brief asks for scalability *"from hundreds to tens of thousands"* (§4.1), so 10 000 is the tier that meets it literally; mirror ≈ 3.5 GB |
 | **No stemming** | Porter/Snowball ports are not byte-identical across languages; would break the conformance hash |
 | Local mirror for benchmarks | Live Gutenberg measures their rate limiter, not our code; one live run quantifies the bias |
 | Metadata storage comparison dropped | Explicitly optional in the brief |

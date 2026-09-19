@@ -53,7 +53,7 @@ T1 must be the person with the most availability: they own the oracle everyone e
 | T01 | Rename repo `PIE-search` → `stage_1` | S | — | URL is exactly `github.com/PIE-data/stage_1` (brief §6.2) | — |
 | T02 | Protect `main`, add CODEOWNERS, issue labels, project board | S | `.github/` | PR + 1 approval required; direct push blocked | T01 |
 | T03 | Make org membership public; verify each `git config user.email` | S | — | contributor graph shows all four | T01 |
-| T04 | Corpus mirror — fetch candidates at 1 req/s, validate | M | `infra/mirror/` | ≥2 000 books cached, each with both markers and `Language: English` | — |
+| T04 | Corpus mirror — fetch candidates at 1 req/s, validate | M | `infra/mirror/` | ≥10 000 books cached, each with both markers and `Language: English`; ~7 h unattended | — |
 | T05 | **Freeze `SPEC.md`** — all four approve line by line | L | `docs/SPEC.md` | tag `spec-frozen` | — |
 | T06 | Shared assets: stop-word list, corpus manifests 100/500/2000 | M | `spec/stopwords_en.txt`, `spec/corpus/` | manifests validated against the mirror, committed, immutable | T04, T05 |
 | T07 | Query workloads: 100 high-freq, 100 mid, 100 rare, **100 absent** | S | `spec/queries/` | drawn from the real corpus vocabulary, fixed seed | T06 |
@@ -128,10 +128,10 @@ T36 can be built during Phase 1 against a stub. The runs need T35.
 
 | ID | Task | Size | Files | Done when | Depends on |
 |---|---|---|---|---|---|
-| T36 | Bench runner — repetitions, warm-up discard, cold-cache drop, **external** RSS capture, disk/inode preflight, teardown excluded from the timer | L | `src/benchmark/runner.py` | dry run on `manifest_100` completes for all 3 languages | T27 |
+| T36 | Bench runner — repetitions, warm-up discard, cold-cache drop, **external** RSS capture, disk/inode preflight (abort under 60 GB free or 4 M free inodes), teardown excluded from the timer | L | `src/benchmark/runner.py` | dry run on `manifest_100` completes for all 3 languages | T27 |
 | T37 | E1–E5 datalake benchmarks | M | `src/benchmark/datalake_bench.py` | every (language × layout × metric) cell filled | T35, T36 |
 | T38 | E6–E9 index benchmarks | M | `src/benchmark/index_bench.py` | every (language × backend × metric) cell filled | T35, T36 |
-| T39 | E10–E11 scalability sweep, 100 / 500 / 2 000 | M | — | run in one unattended session | T37, T38 |
+| T39 | E10–E11 scalability sweep, 100 / 1 000 / 10 000 | M | — | run in one unattended session; the `folder` backend at 10 000 creates ~1 M files, so budget for slow teardown | T37, T38 |
 | T40 | Aggregate + plot F1–F10 | M | `aggregate.py`, `plots.py` | `results/summary.csv` and all figures committed | T39 |
 | T41 | Check results against the written predictions; investigate every contradiction | M | — | each anomaly explained in prose or filed as a bug | T40 |
 
@@ -139,17 +139,22 @@ T36 can be built during Phase 1 against a stub. The runs need T35.
 
 | ID | Metric (brief's wording) | Varies | Fixed |
 |---|---|---|---|
-| E1 | Download and write throughput | lang × layout | corpus 500, workers ∈ {1, 8} |
-| E2 | Lookup cost | lang × layout | 500 seeded lookups, p50 / p95 |
-| E3 | Incremental processing | lang × layout | corpus 500, +25 new |
+| E1 | Download and write throughput | lang × layout | corpus 1 000, workers ∈ {1, 8} |
+| E2 | Lookup cost | lang × layout | 1 000 seeded lookups, p50 / p95 |
+| E3 | Incremental processing | lang × layout | corpus 1 000, +50 new |
 | E4 | Recovery behavior | lang × layout | SIGKILL at 50%; count duplicates and losses |
 | E5 | Storage overhead | layout only | #files, #dirs, bytes, bytes/book |
-| E6 | Indexing speed | lang × backend | layout `batch`, corpus 500, positions on |
+| E6 | Indexing speed | lang × backend | layout `batch`, corpus 1 000, positions on |
 | E7 | Query performance | lang × backend | 4 workloads: single, AND-2, AND-3, **absent** |
-| E8 | Update performance | lang × backend | +25 books onto a 500-book index |
+| E8 | Update performance | lang × backend | +50 books onto a 1 000-book index |
 | E9 | Memory and disk usage | lang × backend | peak RSS, on-disk bytes, #files |
 | E10 | Scalability — datalake | layout × size | one language |
 | E11 | Scalability — index | backend × size | one language |
+
+> **Cost of the 10 000-book tier.** The `folder` backend creates roughly one file per distinct
+> term — on the order of a million. Deleting that tree between repetitions takes minutes, so teardown
+> must sit outside the timer, and the run belongs on ext4: NTFS and APFS are case-insensitive and would
+> silently merge terms that differ only in case.
 
 ### Protocol (non-negotiable — without these the numbers are noise)
 
@@ -175,7 +180,7 @@ T36 can be built during Phase 1 against a stub. The runs need T35.
 | T44 | §3 System architecture — datalake, datamart **and control layer** | M | — | all three covered | T25 |
 | T45 | §4 Design decisions — structures and indexing strategies, **justified** | M | — | each choice in the table below argued | T23 |
 | T46 | §5 Benchmarks and results | L | — | ≥3 languages · datalake structure · index structure · **which layout we chose and why** · **cross-language trade-offs** | T41 |
-| T47 | §5 *Threats to validity* subsection | S | — | single machine, one filesystem, English-only corpus, 2 000 books is not Big Data, mirror, 3 reps, SQLite in place of Mongo | T46 |
+| T47 | §5 *Threats to validity* subsection | S | — | single machine, one filesystem, English-only corpus, 10 000 books is still a modest corpus, mirror removes network variance, 3 reps, SQLite in place of Mongo | T46 |
 | T48 | §6 Conclusions and future improvements | S | — | names what Stage 2 inherits | T46 |
 | T49 | `README.md` — detailed setup and execution | M | `README.md` | a teammate who did **not** write it runs the pipeline clean from it | T35 |
 | T50 | `data/sample/` — small committed dataset | S | `data/sample/` | instructor runs the pipeline in one command | T35 |
@@ -231,7 +236,7 @@ T36 can be built during Phase 1 against a stub. The runs need T35.
 |---|---|
 | Python + Node + Go | No build ceremony on any of the three; contrast spans interpreted / event-loop JIT / compiled |
 | `json` + `folder` + **SQLite** instead of MongoDB | Brief §4.2 explicitly permits custom approaches; no external service; cleaner axis — one big file vs many small files vs embedded B-tree |
-| English-only corpus, tiers 100 / 500 / 2 000 | One stop-word list; 2 000 books ≈ 1 GB, fits an unattended run |
+| English-only corpus, tiers 100 / 1 000 / 10 000 | One stop-word list. The brief asks for scalability *"from hundreds to tens of thousands"* (§4.1); 10 000 meets it literally. Mirror ≈ 3.5 GB |
 | **No stemming** | Porter/Snowball ports are not byte-identical across languages and would break the conformance hash |
 | Word-level index (positions + `tf`) | The deck requires positions; Stage 2 needs them for phrase queries and ranking |
 | Local mirror for all benchmarks | Live Gutenberg measures their rate limiter, not our code |
@@ -243,9 +248,9 @@ T36 can be built during Phase 1 against a stub. The runs need T35.
 
 Cut from the top. Everything below the line is mandatory.
 
-1. Scalability drops to two sizes (100 / 500)
+1. Scalability drops to two sizes (100 / 1 000)
 2. E3 and E8 run in one language only, extrapolated and stated as such
-3. Corpus tiers drop to 100 / 250
+3. Corpus tiers drop to 100 / 500
 4. Optional oral presentation
 5. `folder` backend in one language only — *last resort; it costs the three-language index claim*
 
