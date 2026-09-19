@@ -1,0 +1,23 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, node, go]
+        backend:  [json, folder, sqlite]
+        layout:   [time, book, hash]
+    steps:
+      - uses: actions/checkout@v4
+      # TODO (issue #7): set up each toolchain, build, then assert that
+      # `export-canonical` over spec/golden/ matches spec/golden/expected.sha256.
+      - name: Placeholder
+        run: |
+          echo "${{ matrix.language }} / ${{ matrix.backend }} / ${{ matrix.layout }}"
+          exit 1

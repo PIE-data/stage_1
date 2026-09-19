@@ -1,0 +1,10 @@
+# One owner per area. Fill in the GitHub handles.
+# A PR touching these paths needs that owner's review.
+
+/docs/            @andreapatruno1
+/spec/            @andreapatruno1
+/src/python/      @
+/src/node/        @
+/src/go/          @
+/src/benchmark/   @
+/report/          @

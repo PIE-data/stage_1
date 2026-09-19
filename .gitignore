@@ -1,0 +1,42 @@
+# --- corpus and runtime data: NEVER commit -----------------------------
+# The mirror is ~1 GB and the datalake/datamarts are regenerable artifacts.
+infra/mirror/
+workspace/
+/data/*
+!/data/sample/
+
+# --- generated datamarts -----------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+inverted_index.json
+inverted_index/
+
+# --- language toolchains ------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+package-lock.json
+/src/go/engine
+/src/go/**/engine
+
+# --- LaTeX build artifacts (report.pdf is built, not edited) -----------
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+
+# --- editors / OS -------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

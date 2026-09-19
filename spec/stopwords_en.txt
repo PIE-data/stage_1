@@ -1,0 +1,5 @@
+# English stop words for the Stage 1 inverted index.
+# One lowercase term per line. Lines starting with # are comments.
+# Committed deliberately: library lists differ between languages, which would
+# make the three implementations produce different indexes.
+# TODO (issue #9): complete this list.
