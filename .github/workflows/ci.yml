@@ -1,23 +1,151 @@
 name: CI
+
 on:
   pull_request:
   push:
     branches: [main]
 
+# The conformance matrix cannot pass until all three implementations exist and
+# the golden fixture is frozen. Rather than failing 27 checks from day one --
+# which would block every PR -- each job switches itself on as soon as the code
+# it tests appears in the repository.
+
 jobs:
+  detect:
+    name: what exists
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.check.outputs.python }}
+      node: ${{ steps.check.outputs.node }}
+      go: ${{ steps.check.outputs.go }}
+      golden: ${{ steps.check.outputs.golden }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        run: |
+          has() { [ -n "$(find "$1" -name "$2" -not -name '.gitkeep' 2>/dev/null | head -1)" ] && echo true || echo false; }
+
+          {
+            echo "python=$(has src/python 'test_*.py')"
+            echo "node=$(has src/node 'package.json')"
+            echo "go=$(has src/go 'go.mod')"
+            echo "golden=$([ -s spec/golden/expected.sha256 ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: summary
+        run: |
+          echo "### What CI will run" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| target | present |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| python tests | ${{ steps.check.outputs.python }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| node tests | ${{ steps.check.outputs.node }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| go tests | ${{ steps.check.outputs.go }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| conformance matrix | ${{ steps.check.outputs.golden }} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------- shared assets
+
+  spec-assets:
+    name: spec assets are well formed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: stop-word list
+        run: |
+          f=spec/stopwords_en.txt
+          [ -f "$f" ] || { echo "missing $f"; exit 1; }
+          terms=$(grep -vc '^#\|^$' "$f" || true)
+          echo "$terms terms"
+          [ "$terms" -gt 0 ] || { echo "stop-word list is empty"; exit 1; }
+
+          # SPEC.md §3.3: one lowercase term per line.
+          if grep -vE '^#|^$' "$f" | grep -qE '[A-Z]| '; then
+            echo "stop-word list contains uppercase or spaces"; exit 1
+          fi
+          # Duplicates would silently do nothing, but signal a sloppy edit.
+          dups=$(grep -vE '^#|^$' "$f" | sort | uniq -d)
+          [ -z "$dups" ] || { echo "duplicate terms: $dups"; exit 1; }
+
+      - name: line endings are LF
+        run: |
+          # CRLF in a shared asset changes its bytes and would break the
+          # canonical hash between a Windows and a Linux checkout.
+          if git ls-files spec/ | xargs -r file | grep -q CRLF; then
+            echo "CRLF found in spec/ -- check .gitattributes"; exit 1
+          fi
+
+  # ------------------------------------------------------------ unit tests
+
+  python:
+    name: python unit tests
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest ruff
+      - name: lint
+        run: ruff check src/python || true     # advisory until the style is settled
+      - name: tests
+        run: python -m pytest src/python -v
+
+  node:
+    name: node unit tests
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix src/node || npm install --prefix src/node
+      - run: npm test --prefix src/node
+
+  go:
+    name: go unit tests
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go vet ./...
+        working-directory: src/go
+      - run: go test ./... -v
+        working-directory: src/go
+
+  # --------------------------------------------------------- conformance gate
+
   conformance:
+    name: conformance (${{ matrix.language }}, ${{ matrix.backend }}, ${{ matrix.layout }})
+    needs: detect
+    if: needs.detect.outputs.golden == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         language: [python, node, go]
-        backend:  [json, folder, sqlite]
-        layout:   [time, book, hash]
+        backend: [json, folder, sqlite]
+        layout: [time, book, hash]
     steps:
       - uses: actions/checkout@v4
-      # TODO (issue #7): set up each toolchain, build, then assert that
-      # `export-canonical` over spec/golden/ matches spec/golden/expected.sha256.
-      - name: Placeholder
+
+      # TODO (issue #7, once the CLI exists in all three languages):
+      #   set up the toolchain for ${{ matrix.language }}, build, then
+      #     engine --workspace "$w" --datalake-layout ${{ matrix.layout }} \
+      #            --index-backend ${{ matrix.backend }} index --all
+      #     engine ... export-canonical --out canonical.json
+      #     sha256sum -c spec/golden/expected.sha256
+      - name: not implemented yet
         run: |
-          echo "${{ matrix.language }} / ${{ matrix.backend }} / ${{ matrix.layout }}"
+          echo "Conformance runner not wired up yet -- see issue #7."
+          echo "This job only starts once spec/golden/expected.sha256 exists."
           exit 1
