@@ -1,10 +1,33 @@
-# One owner per area. Fill in the GitHub handles.
-# A PR touching these paths needs that owner's review.
+# Who reviews what.
+#
+# A PR touching one of these paths needs that owner's approval before it can
+# merge. The point is not bureaucracy: it is that the person who will have to
+# live with a file is the one who reads the change to it.
 
-/docs/            @andreapatruno1
-/spec/            @andreapatruno1
-/src/python/      @
-/src/node/        @
-/src/go/          @
-/src/benchmark/   @
-/report/          @
+# The contract and the docs. Changes here affect all three implementations,
+# so they go through the spec owner.
+/docs/                  @andreapatruno1
+/spec/                  @andreapatruno1
+
+# The Python reference. Several people contribute components (downloader,
+# metadata, control layer), but it has one reviewer so the reference stays
+# internally consistent — Node and Go are ported against it.
+/src/python/            @andreapatruno1
+
+# The ports. Each language has a single owner.
+/src/node/              @ivanc25
+/src/go/                @maneloco
+
+# Benchmarks, results and the report.
+/src/benchmark/         @marcelakuczynska
+/results/               @marcelakuczynska
+/report/                @marcelakuczynska
+
+# Infrastructure: CI, tooling, the sample dataset.
+/.github/               @marcelakuczynska
+/tools/                 @marcelakuczynska
+/data/                  @marcelakuczynska
+
+# The README is graded (brief §6.2) and must be verified by someone who did
+# not write it.
+/README.md              @marcelakuczynska @andreapatruno1
