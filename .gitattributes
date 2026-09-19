@@ -1,0 +1,12 @@
+# LF everywhere. Cross-platform CRLF conversion would change file bytes and
+# break the canonical index hash between Windows and Linux checkouts.
+* text=auto eol=lf
+
+# The golden corpus must be byte-identical on every machine: never normalise it.
+spec/golden/** -text
+spec/corpus/** -text
+spec/stopwords_en.txt -text
+spec/queries/** -text
+
+*.png binary
+*.pdf binary
