@@ -23,6 +23,7 @@ does block aggressive downloading.
 from __future__ import annotations
 
 import argparse
+import http.client
 import random
 import re
 import sys
@@ -75,7 +76,12 @@ def fetch(book_id: int, timeout: int = 60) -> tuple[str, str | None]:
                 print(f"  ! HTTP {e.code} on {book_id} -- backing off 60s", flush=True)
                 time.sleep(60)
                 continue
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (
+            urllib.error.URLError,
+            http.client.HTTPException,   # IncompleteRead, BadStatusLine, ... -- NOT an OSError
+            TimeoutError,
+            OSError,
+        ):
             pass
         if attempt < 2:
             time.sleep(delay)
@@ -149,6 +155,11 @@ def main() -> int:
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 15
 
+    # Progress must be measured against THIS session's work, not the resumed
+    # total: dividing the resumed count by this session's attempts produced
+    # nonsense like "accept 4796%".
+    start_accepted = len(accepted)
+
     try:
         for book_id in candidates:
             if len(accepted) >= args.target:
@@ -193,13 +204,15 @@ def main() -> int:
 
             if tried % 25 == 0:
                 el = time.time() - t0
-                rate = len(accepted) / el * 3600 if el else 0
-                pct = 100 * len(accepted) / max(tried, 1)
-                eta = (args.target - len(accepted)) / (rate / 3600) if rate else 0
+                gained = len(accepted) - start_accepted        # this session only
+                pct = 100 * gained / tried
+                rate = gained / el * 3600 if el > 0 else 0     # accepted per hour
+                remaining = args.target - len(accepted)
+                eta_min = remaining / rate * 60 if rate > 0 else float("inf")
                 print(
-                    f"  {len(accepted):5d}/{args.target}  "
-                    f"tried {tried:5d}  accept {pct:4.1f}%  "
-                    f"{rate:5.0f}/h  eta {eta/60:5.1f} min",
+                    f"  {len(accepted):6d}/{args.target}  "
+                    f"tried {tried:5d}  accept {pct:5.1f}%  "
+                    f"{rate:6.0f}/h  eta {eta_min:6.1f} min",
                     flush=True,
                 )
 
