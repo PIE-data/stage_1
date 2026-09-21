@@ -44,7 +44,7 @@ jobs:
           echo "| python tests | ${{ steps.check.outputs.python }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| node tests | ${{ steps.check.outputs.node }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| go tests | ${{ steps.check.outputs.go }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| conformance matrix | ${{ steps.check.outputs.golden }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| conformance matrix | ${{ steps.check.outputs.conformance }} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ----------------------------------------------------------- shared assets
 
