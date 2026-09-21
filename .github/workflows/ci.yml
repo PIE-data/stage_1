@@ -82,7 +82,7 @@ jobs:
             echo "CRLF found in an authored spec asset -- check .gitattributes"
             printf '%s\n' $files | xargs -r file | grep CRLF
             exit 1
-          fis
+          fi
 
   # ------------------------------------------------------------ unit tests
 
