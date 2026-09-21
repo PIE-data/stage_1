@@ -70,10 +70,16 @@ jobs:
 
       - name: line endings are LF
         run: |
-          # CRLF in a shared asset changes its bytes and would break the
-          # canonical hash between a Windows and a Linux checkout.
-          if git ls-files spec/ | xargs -r file | grep -q CRLF; then
-            echo "CRLF found in spec/ -- check .gitattributes"; exit 1
+          # Assets we author must be LF: CRLF would change their bytes and
+          # break the canonical hash between a Windows and a Linux checkout.
+          # The vendored golden books are excluded on purpose -- Gutenberg
+          # serves CRLF, .gitattributes marks spec/golden/** as -text, and
+          # they must stay byte-identical to the source.
+          files=$(git ls-files spec/ | grep -v '^spec/golden/.*\.txt$')
+          if [ -n "$files" ] && printf '%s\n' $files | xargs -r file | grep -q CRLF; then
+            echo "CRLF found in an authored spec asset -- check .gitattributes"
+            printf '%s\n' $files | xargs -r file | grep CRLF
+            exit 1
           fi
 
   # ------------------------------------------------------------ unit tests
