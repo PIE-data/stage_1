@@ -19,6 +19,7 @@ jobs:
       node: ${{ steps.check.outputs.node }}
       go: ${{ steps.check.outputs.go }}
       golden: ${{ steps.check.outputs.golden }}
+      conformance: ${{ steps.check.outputs.conformance }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +32,7 @@ jobs:
             echo "node=$(has src/node 'package.json')"
             echo "go=$(has src/go 'go.mod')"
             echo "golden=$([ -s spec/golden/expected.sha256 ] && echo true || echo false)"
+            echo "conformance=$([ -f tools/run_conformance.sh ] && echo true || echo false)"
           } >> "$GITHUB_OUTPUT"
 
       - name: summary
@@ -80,7 +82,7 @@ jobs:
             echo "CRLF found in an authored spec asset -- check .gitattributes"
             printf '%s\n' $files | xargs -r file | grep CRLF
             exit 1
-          fi
+          fis
 
   # ------------------------------------------------------------ unit tests
 
@@ -133,7 +135,7 @@ jobs:
   conformance:
     name: conformance (${{ matrix.language }}, ${{ matrix.backend }}, ${{ matrix.layout }})
     needs: detect
-    if: needs.detect.outputs.golden == 'true'
+    if: needs.detect.outputs.conformance == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
