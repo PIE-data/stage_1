@@ -155,7 +155,9 @@ def test_header_normalises_newlines_and_bom():
 
 @pytest.mark.skipif(not GOLDEN.exists(), reason="golden fixture not present")
 def test_every_golden_book_splits():
-    books = sorted(GOLDEN.glob("*.txt"))
+    # Numeric stems only: spec/golden also holds manifest_20.txt (a list of
+    # ids, no markers) and the synthetic fixture, which has its own test.
+    books = sorted(p for p in GOLDEN.glob("*.txt") if p.stem.isdigit())
     assert books, "no golden books found"
     for path in books:
         header, body = split_file(path)
