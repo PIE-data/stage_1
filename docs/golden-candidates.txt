@@ -1,0 +1,112 @@
+## END marker quoted in the text (n_end > 1)  (0)
+   none found -- build this case by hand
+
+## START marker repeated (n_start > 1)  (0)
+   none found -- build this case by hand
+
+## no Author field  (490)
+       10    4429 KB  The King James Version of the Bible       -- no author --
+    10151     895 KB  The Great Events by Famous Historians, V  -- no author --  [wrapped: editor]
+    10225      85 KB  Their Crimes                              -- no author --
+    10294      77 KB  Verse and Prose for Beginners in Reading  -- no author --
+    10448      60 KB  The Anti-Slavery Harp: A Collection of S  -- no author --
+    10467     674 KB  A Select Collection of Old English Plays  -- no author --
+    10543     343 KB  Norwegian Life                            -- no author --
+    10553    1831 KB  The first New Testament printed in Engli  -- no author --
+    10643     627 KB  The World's Greatest Books — Volume 02 —  -- no author --  [wrapped: editor]
+    10895     340 KB  A Compilation of the Messages and Papers  -- no author --  [wrapped: credits]
+
+## wrapped header field (real continuation)  (4931)
+    10020     258 KB  The Strand Magazine: Vol. 07, Issue 37,   Various  [wrapped: the project gutenberg ebook of the strand magazine]
+    10022     205 KB  White Queen of the Cannibals: the Story   A. J. Bueltmann  [wrapped: the project gutenberg ebook of white queen of the cannibals]
+    10051     222 KB  The Little Pilgrim: Further Experiences.  Mrs. Oliphant  [wrapped: the project gutenberg ebook of the little pilgrim]
+    10056     510 KB  Chinese literature Comprising the Analec  Confucius Faxian Mencius  [wrapped: author,title,translator]
+    10082     607 KB  The Hampstead Mystery                     John R. Watson Arthur J. R  [wrapped: author]
+    10084     357 KB  Kazan                                     James Oliver Curwood  [wrapped: credits,illustrator]
+    10094     445 KB  A Soldier of Virginia: A Tale of Colonel  Burton Egbert Stevenson  [wrapped: the project gutenberg ebook of a soldier of virginia]
+    10106     110 KB  Punchinello, Volume 2, No. 34, November   Various  [wrapped: credits]
+    10107     425 KB  With British Guns in Italy: A Tribute to  Baron Hugh Dalton Dalton  [wrapped: the project gutenberg ebook of with british guns in italy]
+    10119     293 KB  Adonais                                   Percy Bysshe Shelley  [wrapped: credits]
+
+## no Release date field  (0)
+   none found -- build this case by hand
+
+## release date not 'Month D, YYYY [eBook #N]'  (0)
+   none found -- build this case by hand
+
+## non-ASCII characters in the title  (441)
+    10056     510 KB  Chinese literature Comprising the Analec  Confucius Faxian Mencius  [wrapped: author,title,translator]
+    10343    1136 KB  The Works of Charles and Mary Lamb — Vol  Charles Lamb Mary Lamb  [wrapped: author]
+    10434     937 KB  Wyandotté; Or, The Hutted Knoll: A Tale   James Fenimore Cooper
+    10600    1281 KB  A General History and Collection of Voya  Robert Kerr  [wrapped: credits]
+    10643     627 KB  The World's Greatest Books — Volume 02 —  -- no author --  [wrapped: editor]
+    10974     363 KB  A Ride to India across Persia and Baluch  Harry De Windt
+    11008     452 KB  Antwerp to Gallipoli: A Year of the War   Arthur Ruhl  [wrapped: the project gutenberg ebook of antwerp to gallipoli]
+    11600     739 KB  The Life of Marie de Medicis, Queen of F  Miss Pardoe
+    11601     715 KB  The Life of Marie de Medicis, Queen of F  Miss Pardoe
+    11989     275 KB  The Crime of the French Café and Other S  Nicholas Carter
+
+## 4-byte UTF-8 (astral) characters in the body  (8)
+    43593    1091 KB  The Life of Ludwig van Beethoven, Volume  Alexander Wheelock Thayer  [wrapped: proofreading team at http]  [astral=31]
+    62364    1047 KB  The Origin of Tyranny                     P. N. Ure  [astral=7]
+    62133     118 KB  Useful Phrases in the Shanghai Dialect    Gilbert McIntosh  [wrapped: credits]  [astral=5]
+    57336    2297 KB  Ancient Britain and the Invasions of Jul  T. Rice Holmes  [astral=2]
+    58191      51 KB  The American Bee-Keeper, Vol. II, Number  Various  [wrapped: proofreading team at http]  [astral=2]
+    55280     526 KB  An Enquiry into the Life and Legend of M  J. Wood Brown  [wrapped: http]  [astral=1]
+    57608     235 KB  Church Needlework: A manual of practical  Hinda M. Hands Author of i  [wrapped: author,proofreading team at http,the project gutenberg ebook of church needlework]  [astral=1]
+    57868    2022 KB  The Middle Kingdom, Volume 1 (of 2)       S. Wells Williams  [astral=1]
+
+## U+FFFD in the body (damaged source encoding)  (4)
+    58182      19 KB  Index of the Project Gutenberg Works of   Jr. Thomas Dixon  [U+FFFD=173]
+    59023      23 KB  Index of the Project Gutenberg Works of   Immanuel Kant  [U+FFFD=143]
+    59024      14 KB  Index of the Project Gutenberg Works of   Arthur Schopenhauer  [U+FFFD=25]
+    65247    1159 KB  A Class-Book of New Testament History     G. F. Maclear  [U+FFFD=4]
+
+## heaviest accented text  (10)
+    56271     955 KB  Municipal housecleaning the methods and   William Parr Capes Jeanne   [wrapped: author,proofreading team at http,title]
+    62369    3851 KB  The book review digest, volume 03, 1907   Various  [wrapped: proofreading team at https]
+    50354    1709 KB  Argot and slang a new French and English  Albert Barrère  [wrapped: online distributed proofreading team at http,title]
+    65083     820 KB  Race Distinctions in American Law         Gilbert Thomas Stephenson
+    51491    4819 KB  Church History (Volumes 1-3)              J. H. Kurtz
+      883    1897 KB  Our Mutual Friend                         Charles Dickens
+     1259    1455 KB  Twenty years after                        Alexandre Dumas Auguste Ma  [wrapped: author]
+    46450    2886 KB  Manual of the Trees of North America (Ex  Charles Sprague Sargent  [wrapped: distributed proofreading team at http,illustrator]
+      821    2068 KB  Dombey and Son                            Charles Dickens
+    44621    5901 KB  Motion pictures, 1960-1969 Catalog of co  Library of Congress. Copyr  [wrapped: title]
+
+## most apostrophes  (10)
+     4500   14879 KB  Complete Project Gutenberg Works of Geor  George Meredith
+    37683    2264 KB  Chambers's Twentieth Century Dictionary   -- no author --
+    50954    5378 KB  The Complete Poetic and Dramatic Works o  Robert Browning
+     5600   14565 KB  The Historical Romances of Georg Ebers    Georg Ebers
+    57334    2024 KB  Si Klegg, Complete, Books 1-6             John McElroy  [wrapped: credits]
+    18175     557 KB  Yorksher Puddin'                          John Hartley
+    41070    2408 KB  The Native Races [of the Pacific states]  Hubert Howe Bancroft  [wrapped: proofreading team at http]
+      883    1897 KB  Our Mutual Friend                         Charles Dickens
+    62369    3851 KB  The book review digest, volume 03, 1907   Various  [wrapped: proofreading team at https]
+    36020     682 KB  Slave Narratives: A Folk History of Slav  United States. Work Projec  [wrapped: the project gutenberg ebook of slave narratives]
+
+## shortest bodies  (10)
+     8527       9 KB  Eve's Diary, Part 2                       Mark Twain
+     8339      10 KB  The Bible, Douay-Rheims, Book 39: Nahum   -- no author --
+     8035      10 KB  The Bible, King James version, Book 35:   Anonymous
+    65726      10 KB  Day of the Comet                          Ivar Jorgensen
+    14320      10 KB  Landscape and Song                        -- no author --  [wrapped: credits]
+    45484      10 KB  The Raven                                 Edgar Allan Poe  [wrapped: credits]
+    29989      10 KB  The Outbreak of Peace                     H. B. Fyfe
+    22470      10 KB  The Bell Tone                             Edmund Harry Leftwich
+    68519      10 KB  The urine dance of the Zuni Indians of N  John Gregory Bourke
+    44431      10 KB  Four Hundred Humorous Illustrations, Vol  -- no author --  [wrapped: credits]
+
+## longest bodies  (10)
+    29765   29209 KB  Webster's Unabridged Dictionary           Various
+     4500   14879 KB  Complete Project Gutenberg Works of Geor  George Meredith
+     5600   14565 KB  The Historical Romances of Georg Ebers    Georg Ebers
+    27560    8725 KB  The 2005 CIA World Factbook               United States. Central Int
+      200    8241 KB  The Project Gutenberg Encyclopedia, Volu  Project Gutenberg
+    48661    6087 KB  The Circle of Knowledge: A Classified, S  -- no author --  [wrapped: the project gutenberg ebook of the circle of knowledge]
+    44621    5901 KB  Motion pictures, 1960-1969 Catalog of co  Library of Congress. Copyr  [wrapped: title]
+    12030    5678 KB  The Spectator, Volumes 1, 2 and 3         Joseph Addison Sir Richard  [wrapped: author]
+    69262    5551 KB  History for ready reference, Volume 4, N  J. N. Larned
+    50954    5378 KB  The Complete Poetic and Dramatic Works o  Robert Browning
+
