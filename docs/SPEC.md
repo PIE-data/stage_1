@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.0.0
+SPEC_VERSION = 1.1.0
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -28,6 +28,7 @@ GLOBAL FLAGS
   --metrics-out <path>        append one JSON metrics record per run
   --log-level <s>             error | warn | info | debug (default: info)
   --seed <int>                seed for any randomised choice (default: 42)
+  --now <ISO8601>             override the ingestion instant (see Determinism)
 
 COMMANDS
   version                     print SPEC_VERSION and build info, exit 0
@@ -46,6 +47,20 @@ COMMANDS
 **Exit codes.** `0` success · `1` unexpected error · `2` invalid arguments · `3` book not found / markers missing · `4` workspace locked.
 
 **Determinism.** Given the same workspace state and the same flags, every command **MUST** be deterministic. No wall-clock-dependent behaviour except the `YYYYMMDD/HH` datalake path, which **MUST** be overridable via `--now <ISO8601>` for testing.
+
+### 1.1 `query` semantics and output
+
+`query` is the only command whose result is compared **between implementations** rather than between runs, so both its input handling and its output bytes are normative.
+
+**Term handling.** The `--terms` string is normalized and filtered by the **document pipeline** of §3.1–§3.3: NFKC, locale-invariant lowercase, ASCII folding, the token state machine, then the four filters. Terms the filter discards — stop words, tokens shorter than 2 or longer than 40 code points, all-digit tokens — are **ignored**: they are removed from the query, not treated as terms that match nothing. Duplicates after normalization collapse to one. A query whose terms are all discarded yields an empty term list.
+
+**Matching.** `--mode and` returns the intersection of the posting sets of the surviving terms; `--mode or` returns their union. An empty term list **MUST** match nothing in both modes — it **MUST NOT** be read as “every book”. A surviving term absent from the index contributes the empty set.
+
+**Output.** `stdout` carries the matching book ids, one per line, **ascending by id**, LF endings, every line terminated including the last, and nothing else: no header, no count, no score, no ranking. Zero matches prints nothing to `stdout` and exits `0`. Everything human-readable — counts, timings, warnings — goes to `stderr`. Ascending id is mandated because Stage 1 defines no scoring function, and any other order would differ between backends by accident. Stage 2 introduces ranking and will replace this clause.
+
+`--limit N` truncates **after** ordering; `--limit 0` prints nothing; `N < 0` is an argument error, exit `2`.
+
+Running `query` against a workspace that holds no index for the selected `--index-backend` is an error — exit `1`, message on `stderr` — **not** an empty result. Otherwise a misconfigured benchmark run reports zero matches in silence and the number ends up in a chart.
 
 ---
 
@@ -325,7 +340,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.0.0",
+  "spec_version":  "1.1.0",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
