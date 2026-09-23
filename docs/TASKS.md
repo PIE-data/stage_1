@@ -167,6 +167,31 @@ T36 can be built during Phase 1 against a stub. The runs need T35.
 - All fetches hit the local mirror. One live-network run, reported separately, quantifies the bias.
 - Peak RSS measured by the runner on the child process, never self-reported.
 
+### Two measurement layers
+
+Following the course material on benchmarking tools, the experiments use two layers, and the report
+(§4 and §5) must say which layer produced each number and why.
+
+| Layer | What it measures | Tool | Experiments |
+|---|---|---|---|
+| **Macro** -- the runner times the CLI from outside | whole commands, including process start-up and I/O; the only fair cross-language comparison of the *same* command | `src/benchmark/runner.py` + `/usr/bin/time -v` | E1, E3-E6, E8-E11 |
+| **Micro** -- a benchmark framework inside each language | a single operation too short to time from outside: start-up would dominate it | Python `pytest-benchmark` · Go `go test -bench` · Node `tinybench` | **E2** lookup, **E7** query |
+
+Micro-benchmark rules, identical in the three languages:
+
+- warm-up **on** in all three (`--benchmark-warmup=on`; Go calibrates on its own; tinybench `warmupIterations`)
+- same inputs: E2 the 1 000 seeded lookups, E7 the four workloads in `spec/queries/`
+- the index is built **once**, outside the timed code, on the 1 000-book tier
+- each result converted to one SPEC §8 metrics record per workload: `metric: "latency"`, `unit: "us"`,
+  `value` = median, `aux.iqr` and `aux.rounds`, so the runner aggregates both layers into one CSV
+
+### How results are presented
+
+- The experiment matrix is reported as the course's **dataset / method / measures** table:
+  dataset = corpus tier, method = language x structure, measures = time, memory, disk.
+- Time and memory are compared **together** with a Pareto front: one point per
+  (language x structure), the front joining those no other point beats on both measures.
+
 ---
 
 ## Phase 4 — Report and delivery
