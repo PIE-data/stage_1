@@ -26,7 +26,7 @@ for _sub in ("core", "datalake", "datamart"):
     sys.path.insert(0, str(HERE / _sub))
 sys.path.insert(0, str(HERE))
 
-from cli import query_terms, run_query  # noqa: E402
+from cli import check_spec_version, query_terms, run_query  # noqa: E402
 from index_base import open_index  # noqa: E402
 
 BACKENDS = ["json", "folder", "sqlite"]
@@ -192,7 +192,23 @@ def test_version_exits_zero(tmp_path):
         capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0
-    assert "spec" in proc.stdout
+    expected = (REPO / "spec" / "SPEC_VERSION").read_text(encoding="utf-8").strip()
+    assert proc.stdout == f"{expected}\n"
+
+
+def test_spec_version_matches_the_repository():
+    # Fails the day spec/SPEC_VERSION is bumped without updating this code.
+    assert check_spec_version() is None
+
+
+def test_spec_mismatch_is_detected(tmp_path):
+    fake = tmp_path / "SPEC_VERSION"
+    fake.write_text("9.9.9\n", encoding="utf-8")
+    assert "mismatch" in check_spec_version(fake)
+
+
+def test_unreadable_spec_version_is_detected(tmp_path):
+    assert "cannot read" in check_spec_version(tmp_path / "missing")
 
 
 def test_unimplemented_command_names_its_issue(tmp_path):

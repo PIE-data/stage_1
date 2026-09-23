@@ -59,6 +59,11 @@ from index_base import open_index  # noqa: E402
 from tokenizer import load_stopwords, tokenize  # noqa: E402
 
 SPEC_VERSION_FILE = REPO / "spec" / "SPEC_VERSION"
+
+# The specification this code implements.  SPEC.md line 10: an implementation
+# refuses to run when this differs from spec/SPEC_VERSION, so a spec change
+# that nobody ported fails loudly instead of producing subtly different output.
+SUPPORTED_SPEC_VERSION = "1.1.0"
 STOPWORDS_FILE = REPO / "spec" / "stopwords_en.txt"
 
 LAYOUTS = ("time", "book", "hash")
@@ -186,9 +191,26 @@ def cmd_query(args) -> int:
 # ---------------------------------------------------------- other commands
 
 
+def check_spec_version(version_file: Path = SPEC_VERSION_FILE) -> str | None:
+    """None when the repository's spec is the one this code implements,
+    otherwise the message explaining the mismatch."""
+    try:
+        found = version_file.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        return f"cannot read {version_file}: {exc}"
+    if found != SUPPORTED_SPEC_VERSION:
+        return f"spec mismatch: this implementation supports {SUPPORTED_SPEC_VERSION}, found {found}"
+    return None
+
+
 def cmd_version(args) -> int:
-    version = SPEC_VERSION_FILE.read_text(encoding="utf-8").strip()
-    print(f"spec {version} python {sys.version_info.major}.{sys.version_info.minor}")
+    # stdout carries the version only, like the Node CLI, so a script can
+    # compare the three implementations byte for byte; build info on stderr.
+    print(SUPPORTED_SPEC_VERSION)
+    print(
+        f"stage-1-python | Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        file=sys.stderr,
+    )
     return EXIT_OK
 
 
@@ -267,6 +289,13 @@ def main(argv: list[str] | None = None) -> int:
     args, extra = parser.parse_known_args(argv)
     if extra and args.command not in PENDING:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
+
+    # Every command, not only `version`: SPEC.md line 10 says refuse to RUN.
+    problem = check_spec_version()
+    if problem:
+        print(problem, file=sys.stderr)
+        return EXIT_ERROR
+
     try:
         return _dispatch(args)
     except FileNotFoundError as exc:
