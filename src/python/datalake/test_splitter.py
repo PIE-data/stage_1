@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from splitter import (
+from .splitter import (
     END_MARKER,
     START_MARKER,
     MarkersNotFound,
