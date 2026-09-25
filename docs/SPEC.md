@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.0
+SPEC_VERSION = 1.1.1
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -340,7 +340,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.0",
+  "spec_version":  "1.1.1",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
@@ -389,7 +389,13 @@ One JSON object per line, appended to `--metrics-out`:
 
 - `String.prototype.normalize` exists, but there is **no** built-in NFD-strip-marks step. Implement ASCII folding
   as `s.normalize("NFD").replace(/\p{Mn}/gu, "").normalize("NFC")` — `\p{Mn}` with the `u` flag is supported and
-  is the one place a regex is permitted, because its semantics are identical to Python's and Go's category test.
+  its semantics are identical to Python's and Go's category test.
+- A regex is permitted in exactly **two** places, both of which test Unicode categories and neither of which
+  splits text: the `\p{Mn}` strip above, and classifying **one code point** as a §3.2 word character with
+  `/^[\p{L}\p{Nd}]$/u` (`\p{L}` is by definition `Lu | Ll | Lt | Lm | Lo`). The classifier is applied to a
+  single code point taken from a `for (const ch of s)` loop, never to the text or a substring; it is compiled
+  once at module level; token boundaries, the apostrophe joiner and positions stay in the explicit state
+  machine. The Go equivalent is `unicode.IsLetter(r) || unicode.Is(unicode.Nd, r)`. (Settled in #82.)
 - `toLowerCase()` in JS is already locale-invariant. Do **not** use `toLocaleLowerCase()`.
 - JS strings are UTF-16. Iterate with `for (const ch of s)` or `[...s]` to get **code points**, never `s[i]` or
   `charCodeAt`, or astral characters will be split and the conformance hash will diverge.
