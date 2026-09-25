@@ -7,6 +7,8 @@ import { join } from "node:path";
 import {
   extractRawTokens,
   filterTokens,
+  isDigit,
+  isWordCharacter,
   loadStopwords,
   normalizeText,
   tokenize,
@@ -236,4 +238,47 @@ test("fully filtered input produces the checksum of an empty byte sequence", () 
     result.sha256_tokens,
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   );
+});
+
+test("Unicode classification recognizes letters and decimal digits", () => {
+  for (const character of ["a", "Ω", "中", "\u{10428}", "7", "\u0661"]) {
+    assert.equal(isWordCharacter(character), true, character);
+  }
+
+  for (const character of ["_", "'", "-", "\u0301", "😀", "ab", ""]) {
+    assert.equal(isWordCharacter(character), false, character);
+  }
+});
+
+test("digit classification accepts only Unicode decimal digits", () => {
+  for (const character of ["0", "\u0661", "\uFF12"]) {
+    assert.equal(isDigit(character), true, character);
+  }
+
+  for (const character of ["a", "²", "Ⅳ", "12", ""]) {
+    assert.equal(isDigit(character), false, character);
+  }
+});
+
+test("the default tokenizer handles Unicode and preserves raw positions", () => {
+  const result = tokenize(
+    "THE CAFÉ 中文 \u0661\u0662 \u{10400}\u{10400}",
+    new Set(["the"])
+  );
+
+  assert.equal(result.n_tokens_raw, 5);
+  assert.equal(result.n_tokens_kept, 3);
+  assert.deepEqual(result.tokens, [
+    { term: "cafe", position: 1 },
+    { term: "中文", position: 2 },
+    { term: "\u{10428}\u{10428}", position: 4 },
+  ]);
+});
+
+test("the default tokenizer joins apostrophes between Unicode letters", () => {
+  const result = tokenize("中文\u2019中文", new Set());
+
+  assert.deepEqual(result.tokens, [
+    { term: "中文\u2019中文", position: 0 },
+  ]);
 });

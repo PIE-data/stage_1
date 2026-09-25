@@ -100,7 +100,29 @@ export function filterTokens(rawTokens, stopwords, isDigit) {
   });
 }
 
-export function tokenize(text, stopwords, { isWordCharacter, isDigit }) {
+// Proposed interpretation of SPEC.md §3.2; tracked in issue #82.
+// These expressions classify one code point and never extract tokens.
+const WORD_CHARACTER = /^[\p{L}\p{Nd}]$/u;
+const DECIMAL_DIGIT = /^\p{Nd}$/u;
+
+export function isWordCharacter(character) {
+  return WORD_CHARACTER.test(character);
+}
+
+export function isDigit(character) {
+  return DECIMAL_DIGIT.test(character);
+}
+
+const UNICODE_CLASSIFIER = {
+  isWordCharacter,
+  isDigit,
+};
+
+export function tokenize(
+  text,
+  stopwords,
+  { isWordCharacter, isDigit } = UNICODE_CLASSIFIER
+) {
   const normalizedText = normalizeText(text);
   const rawTokens = extractRawTokens(normalizedText, isWordCharacter);
   const tokens = filterTokens(rawTokens, stopwords, isDigit);
