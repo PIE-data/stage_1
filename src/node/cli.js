@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 // Specification version supported by this implementation.
-const SUPPORTED_SPEC_VERSION = "1.1.0";
+const SUPPORTED_SPEC_VERSION = "1.1.1";
 
 // Resolve the path relative to this file, regardless of the terminal's working directory.
 const versionFile = new URL("../../spec/SPEC_VERSION", import.meta.url);
