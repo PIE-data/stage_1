@@ -48,11 +48,15 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 for _sub in ("core", "datalake", "datamart"):
     sys.path.insert(0, str(REPO / "src" / "python" / _sub))
+# The datalake storages are a package (relative imports), so src/python
+# itself must be importable too: `from datalake.time_storage import ...`.
+sys.path.insert(0, str(REPO / "src" / "python"))
 
 from canonical import export_canonical  # noqa: E402
 from index_base import open_index  # noqa: E402
@@ -72,15 +76,14 @@ BACKENDS = ("json", "folder", "sqlite", "mongo")
 # Commands that exist in SPEC.md §1 but not yet in this repository, and who
 # owns them.  Keeping them here makes `engine <cmd> --help` honest.
 PENDING = {
-    "download": "issue #1 (downloader)",
-    "split": "issue #1 (downloader + splitter wiring)",
-    "metadata": "issue #4 (metadata datamart)",
-    "index": "issue #2 (datalake storages) -- needs bodies to read",
-    "lookup": "issue #2 (datalake storages)",
-    "scan-new": "issue #5 (control layer)",
+    "split": "issue #60 -- SPEC.md does not say where the raw file is cached",
+    "metadata": "issue #4 (metadata datamart, PR #81)",
     "control-step": "issue #5 (control layer)",
     "reconcile": "issue #5 (control layer)",
 }
+
+# Commands that write a --metrics-out record.  `version` is not a measurement.
+MEASURED = ("download", "index", "lookup", "scan-new", "query", "export-canonical")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -223,7 +226,13 @@ def cmd_export_canonical(args) -> int:
         print(f"no {args.index_backend} index in {workspace}", file=sys.stderr)
         return EXIT_ERROR
 
-    index = open_index(args.index_backend, workspace)
+    import pipeline
+
+    # The canonical form differs with and without positions (SPEC.md §7), so
+    # it must match how the index was built, not assume.
+    positions = pipeline.index_positions(workspace, args.index_backend)
+    index = open_index(args.index_backend, workspace,
+                       positions=True if positions is None else positions)
     try:
         data = export_canonical(index, args.out)
     finally:
@@ -264,6 +273,25 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("export-canonical")
     e.add_argument("--out", required=True)
 
+    d = sub.add_parser("download")
+    src = d.add_mutually_exclusive_group(required=True)
+    src.add_argument("--book-id", type=int)
+    src.add_argument("--manifest")
+    d.add_argument("--workers", type=int, default=1)
+    d.add_argument("--source-base", default="https://www.gutenberg.org")
+
+    ix = sub.add_parser("index")
+    which = ix.add_mutually_exclusive_group(required=True)
+    which.add_argument("--book-id", type=int)
+    which.add_argument("--all", action="store_true")
+    ix.add_argument("--positions", action="store_true")
+    ix.add_argument("--batch-size", type=int, default=500)
+
+    lk = sub.add_parser("lookup")
+    lk.add_argument("--book-id", type=int, required=True)
+
+    sub.add_parser("scan-new")
+
     for name, owner in PENDING.items():
         # No flags declared: whatever the caller passes is accepted and
         # ignored, so a script written against SPEC.md §1 gets the honest
@@ -274,14 +302,56 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _dispatch(args) -> int:
+def _dispatch(args, aux: dict) -> int:
     if args.command == "version":
         return cmd_version(args)
     if args.command == "query":
         return cmd_query(args)
     if args.command == "export-canonical":
         return cmd_export_canonical(args)
+    if args.command in ("download", "index", "lookup", "scan-new"):
+        import pipeline
+
+        handler = {
+            "download": pipeline.cmd_download,
+            "index": pipeline.cmd_index,
+            "lookup": pipeline.cmd_lookup,
+            "scan-new": pipeline.cmd_scan_new,
+        }[args.command]
+        return handler(args, aux)
     return cmd_pending(args)
+
+
+def _run_measured(args) -> int:
+    """Run the command; with --metrics-out, append one SPEC.md §8 record.
+
+    The clock covers the command only: parsing, the spec-version check and
+    writing the record itself are outside it.
+    """
+    aux: dict = {}
+    if not args.metrics_out or args.command not in MEASURED:
+        return _dispatch(args, aux)
+
+    from metrics import append_record, build_record, utc_timestamp_ms
+
+    started_at = utc_timestamp_ms()
+    t0 = time.perf_counter_ns()  # monotonic (SPEC.md §8)
+    code = _dispatch(args, aux)
+    wall_ms = (time.perf_counter_ns() - t0) / 1e6
+    aux["exit_code"] = code
+    append_record(args.metrics_out, build_record(
+        command=args.command,
+        spec_version=SUPPORTED_SPEC_VERSION,
+        datalake_layout=args.datalake_layout,
+        index_backend=args.index_backend,
+        started_at=started_at,
+        wall_time_ms=wall_ms,
+        positions=getattr(args, "positions", None),
+        workers=getattr(args, "workers", None),
+        batch_size=getattr(args, "batch_size", None),
+        aux=aux,
+    ))
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -297,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
     try:
-        return _dispatch(args)
+        return _run_measured(args)
     except FileNotFoundError as exc:
         print(f"{exc}", file=sys.stderr)
         return EXIT_ERROR
