@@ -20,6 +20,7 @@ jobs:
       go: ${{ steps.check.outputs.go }}
       golden: ${{ steps.check.outputs.golden }}
       conformance: ${{ steps.check.outputs.conformance }}
+      ready: ${{ steps.check.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +34,11 @@ jobs:
             echo "go=$(has src/go 'go.mod')"
             echo "golden=$([ -s spec/golden/expected.sha256 ] && echo true || echo false)"
             echo "conformance=$([ -f tools/run_conformance.sh ] && echo true || echo false)"
+            # A language enters the conformance matrix when its porter adds
+            # src/<lang>/CONFORMANCE_READY -- a deliberate "my CLI implements
+            # download, index and export-canonical", not a guess from the files.
+            ready=$(for l in python node go; do if [ -f "src/$l/CONFORMANCE_READY" ]; then printf '"%s",' "$l"; fi; done)
+            echo "ready=[${ready%,}]"
           } >> "$GITHUB_OUTPUT"
 
       - name: summary
@@ -45,6 +51,7 @@ jobs:
           echo "| node tests | ${{ steps.check.outputs.node }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| go tests | ${{ steps.check.outputs.go }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| conformance matrix | ${{ steps.check.outputs.conformance }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| languages in the matrix | ${{ steps.check.outputs.ready }} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ----------------------------------------------------------- shared assets
 
@@ -135,25 +142,36 @@ jobs:
   conformance:
     name: conformance (${{ matrix.language }}, ${{ matrix.backend }}, ${{ matrix.layout }})
     needs: detect
-    if: needs.detect.outputs.conformance == 'true'
+    # Only languages that declared themselves ready (src/<lang>/CONFORMANCE_READY):
+    # a port still in progress shows no cell instead of nine red ones.
+    if: needs.detect.outputs.conformance == 'true' && needs.detect.outputs.ready != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        language: [python, node, go]
+        language: ${{ fromJSON(needs.detect.outputs.ready) }}
         backend: [json, folder, sqlite]
         layout: [time, book, hash]
     steps:
       - uses: actions/checkout@v4
 
-      # TODO (issue #7, once the CLI exists in all three languages):
-      #   set up the toolchain for ${{ matrix.language }}, build, then
-      #     engine --workspace "$w" --datalake-layout ${{ matrix.layout }} \
-      #            --index-backend ${{ matrix.backend }} index --all
-      #     engine ... export-canonical --out canonical.json
-      #     sha256sum -c spec/golden/expected.sha256
-      - name: not implemented yet
-        run: |
-          echo "Conformance runner not wired up yet -- see issue #7."
-          echo "This job only starts once spec/golden/expected.sha256 exists."
-          exit 1
+      # The mirror server and the Python CLI both need Python.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+
+      - if: matrix.language == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - if: matrix.language == 'node'
+        run: npm ci --prefix src/node || npm install --prefix src/node
+
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: canonical hash == spec/golden/expected.sha256
+        run: bash tools/run_conformance.sh ${{ matrix.language }} ${{ matrix.backend }} ${{ matrix.layout }}
