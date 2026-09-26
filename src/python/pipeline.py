@@ -1,5 +1,6 @@
 """
-The pipeline commands of the CLI: download, index, lookup, scan-new.
+The pipeline commands of the CLI: download, split, index, lookup, scan-new,
+control-step, reconcile.
 SPEC.md §1, §2, §4, §6.  Issue #60.
 
 cli.py parses the flags and dispatches here; this module wires together the
@@ -9,7 +10,8 @@ pieces that already exist and are tested on their own:
     datalake.splitter     markers + cleaning              (SPEC.md §2.2-2.3)
     datalake.*_storage    the three layouts               (SPEC.md §4)
     datamart.index_*      the three index backends        (SPEC.md §6)
-    core.control_layer    downloaded / indexed / failed   (SPEC.md §2.4)
+    core.control_layer    downloaded / indexed / failed,
+                          run.lock                        (SPEC.md §2.4)
 
 The shared behaviour of these commands -- exit codes, what `lookup` prints,
 the raw cache, the positions rule -- is SPEC.md §1.2; this file follows it.
@@ -103,11 +105,34 @@ def _record_positions(workspace: Path, backend: str, positions: bool) -> None:
 # --------------------------------------------------------------- download
 
 
-def cmd_download(args, aux: dict) -> int:
+def fetch_one(workspace: Path, storage, tracker: StateTracker, book_id: int,
+              source_base: str) -> str | None:
+    """Download, cache, split and store one book.  None, or the failure REASON.
+
+    The caller records failures, so a thread pool never writes failed_books.txt
+    from several threads at once.
+    """
     # Imported here: `requests` costs start-up time that `query` and `lookup`
     # should not pay -- E2 and E7 would measure it.
     from datalake.downloader import download
 
+    try:
+        raw = download(book_id, source_base=source_base)
+    except FileNotFoundError:
+        return "NOT_FOUND"
+    except Exception:  # retries exhausted, connection refused, ...
+        return "DOWNLOAD_ERROR"
+    atomic_write(raw_path(workspace, book_id), raw)  # SPEC.md §1.2
+    try:
+        header, body = split_text(raw)
+    except MarkersNotFound:
+        return "NO_MARKERS"  # nothing written to the datalake (SPEC.md §2.2)
+    storage.write(book_id, header, body)
+    tracker.mark_downloaded(book_id)  # only after both renames (SPEC.md §2.4)
+    return None
+
+
+def cmd_download(args, aux: dict) -> int:
     workspace = Path(args.workspace)
     if args.workers < 1:
         print("--workers must be >= 1", file=sys.stderr)
@@ -124,20 +149,7 @@ def cmd_download(args, aux: dict) -> int:
     todo = [i for i in dict.fromkeys(ids) if not tracker.is_downloaded(i)]
 
     def one(book_id: int) -> tuple[int, str | None]:
-        try:
-            raw = download(book_id, source_base=args.source_base)
-        except FileNotFoundError:
-            return book_id, "NOT_FOUND"
-        except Exception:  # retries exhausted, connection refused, ...
-            return book_id, "DOWNLOAD_ERROR"
-        atomic_write(raw_path(workspace, book_id), raw)  # SPEC.md §1.2
-        try:
-            header, body = split_text(raw)
-        except MarkersNotFound:
-            return book_id, "NO_MARKERS"  # nothing written (SPEC.md §2.2)
-        storage.write(book_id, header, body)
-        tracker.mark_downloaded(book_id)  # only after both renames (§2.4)
-        return book_id, None
+        return book_id, fetch_one(workspace, storage, tracker, book_id, args.source_base)
 
     if args.workers == 1:
         results = [one(i) for i in todo]
@@ -195,6 +207,37 @@ def cmd_split(args, aux: dict) -> int:
 
 # ------------------------------------------------------------------ index
 
+STOPWORDS = Path(__file__).resolve().parents[2] / "spec" / "stopwords_en.txt"
+
+
+def index_books(workspace: Path, backend: str, positions: bool, storage,
+                tracker: StateTracker, ids: list[int], batch_size: int
+                ) -> tuple[int, list[int]]:
+    """Index `ids` in batches.  Returns (indexed, missing from the datalake)."""
+    stopwords = load_stopwords(STOPWORDS)
+    index = open_index(backend, workspace, positions=positions)
+    _record_positions(workspace, backend, positions)
+    indexed, missing = 0, []
+    try:
+        for start in range(0, len(ids), batch_size):
+            chunk = ids[start:start + batch_size]
+            done = []
+            with index.batch() as batch:
+                for book_id in chunk:
+                    paths = storage.lookup(book_id)
+                    if paths is None:
+                        missing.append(book_id)
+                        continue
+                    body = (workspace / paths[1]).read_bytes().decode("utf-8")
+                    batch.add_book(book_id, tokenize(body, stopwords))
+                    done.append(book_id)
+            # after the batch is committed, never before (crash safety, I3)
+            tracker.mark_indexed(done)
+            indexed += len(done)
+    finally:
+        index.close()
+    return indexed, missing
+
 
 def cmd_index(args, aux: dict) -> int:
     workspace = Path(args.workspace)
@@ -221,29 +264,8 @@ def cmd_index(args, aux: dict) -> int:
               file=sys.stderr)
         return EXIT_NOT_FOUND
 
-    stopwords = load_stopwords(Path(__file__).resolve().parents[2] / "spec" / "stopwords_en.txt")
-    index = open_index(backend, workspace, positions=args.positions)
-    _record_positions(workspace, backend, args.positions)
-    indexed, missing = 0, []
-    try:
-        for start in range(0, len(ids), args.batch_size):
-            chunk = ids[start:start + args.batch_size]
-            done = []
-            with index.batch() as batch:
-                for book_id in chunk:
-                    paths = storage.lookup(book_id)
-                    if paths is None:
-                        missing.append(book_id)
-                        continue
-                    body = (workspace / paths[1]).read_bytes().decode("utf-8")
-                    batch.add_book(book_id, tokenize(body, stopwords))
-                    done.append(book_id)
-            # after the batch is committed, never before (crash safety, I3)
-            tracker.mark_indexed(done)
-            indexed += len(done)
-    finally:
-        index.close()
-
+    indexed, missing = index_books(workspace, backend, args.positions, storage,
+                                   tracker, ids, args.batch_size)
     aux.update(docs_processed=indexed, docs_missing=len(missing))
     print(f"indexed {indexed} book(s) into {backend}"
           + (f", {len(missing)} listed but missing from the datalake" if missing else ""),
@@ -280,4 +302,110 @@ def cmd_scan_new(args, aux: dict) -> int:
     new = sorted(i for i in present if not tracker.is_indexed(i))
     aux.update(docs_in_datalake=len(present), docs_new=len(new))
     sys.stdout.write("".join(f"{i}\n" for i in new))
+    return EXIT_OK
+
+
+# ----------------------------------------------------------- control-step
+
+
+def cmd_control_step(args, aux: dict) -> int:
+    """The control layer: each iteration moves ONE book one stage forward.
+
+    If a downloaded book is not yet indexed, index it (smallest id first);
+    otherwise download the next candidate.  "Index pending first" is what
+    makes a crashed run resume where it stopped instead of downloading on top
+    of a backlog (docs/STAGE1.md Part 5).
+
+    Candidates are the ids of --manifest in file order, or 1..--total-books
+    ascending; ids already downloaded or failed are skipped.  No randomness:
+    the three languages must pick the same books in the same order.
+    """
+    workspace = Path(args.workspace)
+    backend = args.index_backend
+    if backend not in ("json", "folder", "sqlite"):
+        print(f"control-step is not implemented for backend {backend!r}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.iterations < 1 or args.total_books < 1:
+        print("--iterations and --total-books must be >= 1", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        now = parse_now(args.now)
+    except ValueError:
+        print(f"--now is not ISO8601: {args.now!r}", file=sys.stderr)
+        return EXIT_USAGE
+
+    positions = index_positions(workspace, backend)
+    positions = True if positions is None else positions  # word-level by default
+    tracker = StateTracker(workspace)
+    storage = make_storage(args.datalake_layout, workspace, now)
+    candidates = (read_manifest(args.manifest) if args.manifest
+                  else range(1, args.total_books + 1))
+    cursor = iter(candidates)
+
+    downloaded = indexed = failed = 0
+    for _ in range(args.iterations):
+        pending = tracker.ready_to_index()
+        if pending:
+            n, _missing = index_books(workspace, backend, positions, storage,
+                                      tracker, pending[:1], 1)
+            indexed += n
+            continue
+        book_id = next((i for i in cursor
+                        if not tracker.is_downloaded(i) and not tracker.is_failed(i)), None)
+        if book_id is None:
+            break  # nothing left to do: a complete corpus performs zero writes (I4)
+        reason = fetch_one(workspace, storage, tracker, book_id, args.source_base)
+        if reason:
+            tracker.mark_failed(book_id, reason)
+            failed += 1
+        else:
+            downloaded += 1
+
+    aux.update(docs_downloaded=downloaded, docs_indexed=indexed, docs_failed=failed)
+    print(f"control-step: downloaded {downloaded}, indexed {indexed}, failed {failed}",
+          file=sys.stderr)
+    return EXIT_OK
+
+
+# -------------------------------------------------------------- reconcile
+
+
+def cmd_reconcile(args, aux: dict) -> int:
+    """Repair the control files from what is actually on disk.
+
+    The recovery path for a crash between an artifact's rename and the append
+    to downloaded_books.txt (SPEC.md §2.4):
+
+      * downloaded = every id whose header AND body are in the datalake --
+        adds books written but never recorded, drops ids whose artifacts are
+        gone (I2), and removes duplicates (I1);
+      * indexed = the old indexed list restricted to downloaded ids;
+      * leftover *.part files from an interrupted atomic write are deleted.
+
+    A book indexed but not yet marked when the crash hit is simply indexed
+    again by the next run: re-indexing replaces postings, never duplicates them.
+    """
+    workspace = Path(args.workspace)
+    storage = make_storage(args.datalake_layout, workspace)
+    tracker = StateTracker(workspace)
+
+    removed_parts = 0
+    for sub in ("datalake", "raw", "datamarts", "control"):
+        root = workspace / sub
+        if root.exists():
+            for part in root.rglob("*.part"):
+                part.unlink(missing_ok=True)
+                removed_parts += 1
+
+    on_disk = sorted(i for i in set(storage.list_new(EPOCH)) if storage.lookup(i) is not None)
+    before = set(tracker.downloaded())
+    indexed = [i for i in tracker.indexed() if i in set(on_disk)]
+    tracker.rewrite(on_disk, indexed)
+
+    added = sorted(set(on_disk) - before)
+    dropped = sorted(before - set(on_disk))
+    aux.update(docs_added=len(added), docs_dropped=len(dropped), parts_removed=removed_parts)
+    print(f"reconcile: {len(on_disk)} downloaded ({len(added)} recovered, "
+          f"{len(dropped)} dropped), {len(indexed)} indexed, "
+          f"{removed_parts} partial file(s) removed", file=sys.stderr)
     return EXIT_OK

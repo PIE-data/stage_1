@@ -213,7 +213,7 @@ def test_unreadable_spec_version_is_detected(tmp_path):
 
 def test_unimplemented_command_names_its_issue(tmp_path):
     proc = subprocess.run(
-        [sys.executable, str(CLI), "--workspace", str(tmp_path), "reconcile"],
+        [sys.executable, str(CLI), "--workspace", str(tmp_path), "metadata"],
         capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 1
