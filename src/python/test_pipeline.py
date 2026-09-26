@@ -191,6 +191,36 @@ def test_unreachable_source_exits_1(tmp_path, monkeypatch):
     assert "DOWNLOAD_ERROR" in (ws / "control" / "failed_books.txt").read_text()
 
 
+# ------------------------------------------------------------------ split
+
+
+def test_download_caches_the_raw_text(tmp_path, mirror):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:1]) == 0
+    assert (ws / "raw" / f"{FEW[0]}.txt").exists()
+
+
+def test_split_rebuilds_the_datalake_from_the_raw_cache(tmp_path, mirror):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:1]) == 0
+    body = next((ws / "datalake").rglob(f"{FEW[0]}.body.txt"))
+    original = body.read_bytes()
+    body.unlink()
+    assert run(ws, "split", "--book-id", str(FEW[0])) == 0
+    assert body.read_bytes() == original
+
+
+def test_split_without_raw_exits_3(tmp_path):
+    assert run(tmp_path, "split", "--book-id", "7") == 3
+
+
+def test_raw_is_kept_even_without_markers(tmp_path, mirror):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, [NO_MARKERS_ID]) == 3
+    assert (ws / "raw" / f"{NO_MARKERS_ID}.txt").exists()
+    assert run(ws, "split", "--book-id", str(NO_MARKERS_ID)) == 3
+
+
 # ------------------------------------------------------- lookup / scan-new
 
 

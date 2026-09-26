@@ -67,7 +67,7 @@ SPEC_VERSION_FILE = REPO / "spec" / "SPEC_VERSION"
 # The specification this code implements.  SPEC.md line 10: an implementation
 # refuses to run when this differs from spec/SPEC_VERSION, so a spec change
 # that nobody ported fails loudly instead of producing subtly different output.
-SUPPORTED_SPEC_VERSION = "1.1.1"
+SUPPORTED_SPEC_VERSION = "1.1.2"
 STOPWORDS_FILE = REPO / "spec" / "stopwords_en.txt"
 
 LAYOUTS = ("time", "book", "hash")
@@ -76,14 +76,13 @@ BACKENDS = ("json", "folder", "sqlite", "mongo")
 # Commands that exist in SPEC.md §1 but not yet in this repository, and who
 # owns them.  Keeping them here makes `engine <cmd> --help` honest.
 PENDING = {
-    "split": "issue #60 -- SPEC.md does not say where the raw file is cached",
     "metadata": "issue #4 (metadata datamart, PR #81)",
     "control-step": "issue #5 (control layer)",
     "reconcile": "issue #5 (control layer)",
 }
 
 # Commands that write a --metrics-out record.  `version` is not a measurement.
-MEASURED = ("download", "index", "lookup", "scan-new", "query", "export-canonical")
+MEASURED = ("download", "split", "index", "lookup", "scan-new", "query", "export-canonical")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -292,6 +291,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("scan-new")
 
+    sp = sub.add_parser("split")
+    sp.add_argument("--book-id", type=int, required=True)
+
     for name, owner in PENDING.items():
         # No flags declared: whatever the caller passes is accepted and
         # ignored, so a script written against SPEC.md §1 gets the honest
@@ -309,11 +311,12 @@ def _dispatch(args, aux: dict) -> int:
         return cmd_query(args)
     if args.command == "export-canonical":
         return cmd_export_canonical(args)
-    if args.command in ("download", "index", "lookup", "scan-new"):
+    if args.command in ("download", "split", "index", "lookup", "scan-new"):
         import pipeline
 
         handler = {
             "download": pipeline.cmd_download,
+            "split": pipeline.cmd_split,
             "index": pipeline.cmd_index,
             "lookup": pipeline.cmd_lookup,
             "scan-new": pipeline.cmd_scan_new,

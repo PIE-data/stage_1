@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.1
+SPEC_VERSION = 1.1.2
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -61,6 +61,37 @@ COMMANDS
 `--limit N` truncates **after** ordering; `--limit 0` prints nothing; `N < 0` is an argument error, exit `2`.
 
 Running `query` against a workspace that holds no index for the selected `--index-backend` is an error — exit `1`, message on `stderr` — **not** an empty result. Otherwise a misconfigured benchmark run reports zero matches in silence and the number ends up in a chart.
+
+
+### 1.2 Pipeline commands: behaviour the three implementations must share
+
+These rules fix what §1 left open. Each one is observable from outside, so the runner and the conformance
+script depend on it.
+
+**`download`.** For every `200` response the decoded text (§2.1) is first cached, atomically, at
+`<workspace>/raw/<id>.txt`; then it is split and written to the datalake. A book already listed in
+`control/downloaded_books.txt` is skipped **without a request** (invariant I4). A failed book never stops a
+`--manifest` run: it is appended to `control/failed_books.txt` as `<id>\t<REASON>\t<ISO8601>`, with
+`REASON` one of `NOT_FOUND` (HTTP 404), `NO_MARKERS` (§2.2) or `DOWNLOAD_ERROR` (retries exhausted or network
+failure), and the run continues. Exit code at the end: `1` if any book failed with `DOWNLOAD_ERROR`, else `3`
+if any failed with `NOT_FOUND` or `NO_MARKERS`, else `0`. `--workers N` keeps exactly N requests in flight.
+`raw/` is not part of any datalake layout and is excluded from the storage-overhead measurement (E5).
+
+**`split --book-id <id>`** re-splits `raw/<id>.txt` offline and rewrites the book's datalake artifacts with
+the current layout; it exits `3` if the raw file is missing or has no markers (the latter also recorded in
+`failed_books.txt`).
+
+**`index`.** A book is appended to `control/indexed_books.txt` only after the batch containing it is
+committed. `--all` indexes `downloaded − indexed`, ascending by id. Whether an index holds positions is
+fixed when it is first built: adding to it with a different `--positions` setting is an argument error
+(exit `2`), and `export-canonical` emits the form matching how the index was built (§7).
+
+**`lookup --book-id <id>`** resolves through the layout only (§4.1), **reads the body**, and prints one
+line on `stdout`: `<header_path>\t<body_path>\n`, both relative to the workspace with `/` separators.
+Not found: nothing on `stdout`, exit `3`. E2 therefore measures resolving *and* reading.
+
+**`scan-new`** prints the ids present in the datalake and absent from `indexed_books.txt`, one per line,
+ascending.
 
 ---
 
@@ -340,7 +371,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.1",
+  "spec_version":  "1.1.2",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
@@ -367,6 +398,13 @@ One JSON object per line, appended to `--metrics-out`:
 }
 ```
 
+The command cannot know which experiment it belongs to, so the runner passes those fields through the
+environment and the implementation copies them into the record: `BENCH_RUN_ID`, `BENCH_EXPERIMENT`,
+`BENCH_REPETITION`, `BENCH_CORPUS_SIZE`, `BENCH_MACHINE_ID`, `BENCH_IMPL_VERSION`. A field whose variable is
+unset is written as `null` (defaults: `experiment` = `cli_<command>`, `machine_id` = host name). `version`
+writes no record. The clock covers the command only — not argument parsing, the version check or writing the
+record.
+
 `wall_time` **MUST** come from a monotonic clock: `time.perf_counter_ns()` / `System.nanoTime()` / `time.Now()` with a monotonic reading. `peak_rss_bytes` is measured by the **runner** (via `/usr/bin/time -v` or `getrusage` on the child), not self-reported, so that JVM and Go runtime overhead is counted honestly.
 
 ---
@@ -390,12 +428,13 @@ One JSON object per line, appended to `--metrics-out`:
 - `String.prototype.normalize` exists, but there is **no** built-in NFD-strip-marks step. Implement ASCII folding
   as `s.normalize("NFD").replace(/\p{Mn}/gu, "").normalize("NFC")` — `\p{Mn}` with the `u` flag is supported and
   its semantics are identical to Python's and Go's category test.
-- A regex is permitted in exactly **two** places, both of which test Unicode categories and neither of which
-  splits text: the `\p{Mn}` strip above, and classifying **one code point** as a §3.2 word character with
-  `/^[\p{L}\p{Nd}]$/u` (`\p{L}` is by definition `Lu | Ll | Lt | Lm | Lo`). The classifier is applied to a
-  single code point taken from a `for (const ch of s)` loop, never to the text or a substring; it is compiled
-  once at module level; token boundaries, the apostrophe joiner and positions stay in the explicit state
-  machine. The Go equivalent is `unicode.IsLetter(r) || unicode.Is(unicode.Nd, r)`. (Settled in #82.)
+- Besides the `\p{Mn}` strip above, a regex is permitted for one purpose only: **classifying a single code
+  point by Unicode general category**, as §3.2 and §3.3 require — `/^[\p{L}\p{Nd}]$/u` for a word character
+  (`\p{L}` is by definition `Lu | Ll | Lt | Lm | Lo`) and `/^\p{Nd}$/u` for the all-digits filter. Such a
+  regex is applied to one code point taken from a `for (const ch of s)` loop, never to the text or a substring;
+  it is compiled once at module level; token boundaries, the apostrophe joiner and positions stay in the
+  explicit state machine. Go equivalents: `unicode.IsLetter(r) || unicode.Is(unicode.Nd, r)` and
+  `unicode.Is(unicode.Nd, r)`. (Settled in #82; widened in 1.1.2 to cover the digit test.)
 - `toLowerCase()` in JS is already locale-invariant. Do **not** use `toLocaleLowerCase()`.
 - JS strings are UTF-16. Iterate with `for (const ch of s)` or `[...s]` to get **code points**, never `s[i]` or
   `charCodeAt`, or astral characters will be split and the conformance hash will diverge.
