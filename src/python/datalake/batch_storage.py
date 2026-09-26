@@ -2,7 +2,7 @@ import os
 
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple, Iterable, override
+from typing import Tuple, Iterable
 
 from .atomic import atomic_write
 from .base import DatalakeStorage
@@ -17,7 +17,6 @@ class BatchBasedStorage(DatalakeStorage):
         id6 = f"{book_id:06d}"
         return self.root / id6[0:2] / id6[2:4]
 
-    @override
     def write(self, book_id: int, 
               header: str, body: str) -> Tuple[str, str]:
         target_dir = self._get_target_dir(book_id)
@@ -29,11 +28,10 @@ class BatchBasedStorage(DatalakeStorage):
         atomic_write(body_path, body)
         
         return(
-            str(header_path.relative_to(self.workspace)),
-            str(body_path.relative_to(self.workspace))
+            header_path.relative_to(self.workspace).as_posix(),
+            body_path.relative_to(self.workspace).as_posix()
         )
 
-    @override
     def lookup(self, book_id: int) -> Tuple[str, str] | None:
         """ Direct path lookup """
         target_dir = self._get_target_dir(book_id)
@@ -43,12 +41,11 @@ class BatchBasedStorage(DatalakeStorage):
 
         if header_path.exists() and body_path.exists():
             return(
-                str(header_path.relative_to(self.workspace)),
-                str(body_path.relative_to(self.workspace))
+                header_path.relative_to(self.workspace).as_posix(),
+                body_path.relative_to(self.workspace).as_posix()
             )
         return None
 
-    @override
     def list_new(self, since: datetime) -> Iterable[int]:
         root_str = str(self.root)
         if not os.path.exists(root_str):

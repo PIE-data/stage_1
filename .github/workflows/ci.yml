@@ -96,7 +96,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pytest ruff
+      - run: pip install pytest ruff requests
       - name: lint
         run: ruff check src/python || true     # advisory until the style is settled
       - name: tests

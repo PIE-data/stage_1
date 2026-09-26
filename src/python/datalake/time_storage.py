@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Tuple, override
+from typing import Iterable, Tuple
 from .base import DatalakeStorage
 from .atomic import atomic_write
 
@@ -17,7 +17,6 @@ class TimeBasedStorage(DatalakeStorage):
             return self._now
         return datetime.now(timezone.utc)
 
-    @override
     def write(self, book_id:int,
               header: str, body:str) -> Tuple[str, str]:
         
@@ -35,11 +34,10 @@ class TimeBasedStorage(DatalakeStorage):
         atomic_write(body_path, body)
 
         return (
-                str(header_path.relative_to(self.workspace)),
-                str(body_path.relative_to(self.workspace))
+                header_path.relative_to(self.workspace).as_posix(),
+                body_path.relative_to(self.workspace).as_posix()
             )
 
-    @override
     def lookup(self, book_id: int) -> Tuple[str, str] | None:
         target_name = f"{book_id}.body.txt"
 
@@ -49,13 +47,12 @@ class TimeBasedStorage(DatalakeStorage):
                 header_path = Path(root) / f"{book_id}.header.txt"
                 if header_path.exists():
                     return (
-                        str(header_path.relative_to(self.workspace)),
-                        str(body_path.relative_to(self.workspace))
+                        header_path.relative_to(self.workspace).as_posix(),
+                        body_path.relative_to(self.workspace).as_posix()
                     )
 
         return None
     
-    @override
     def list_new(self, since: datetime) -> Iterable[int]:
         root_str = str(self.root)
         if not os.path.exists(root_str):

@@ -1,33 +1,44 @@
-from pathlib import Path
 import os
+from pathlib import Path
+
 
 def atomic_write(target_path: Path | str,
                  content: str,
                  encoding: str = "utf-8") -> None:
     """
-    Writes content to target_path atomically.
+    SPEC.md §2.4: write <target>.part -> flush -> fsync -> rename -> fsync dir.
+
+    Bytes, not text mode: in text mode Windows turns "\\n" into "\\r\\n", so the
+    stored file would no longer be byte-identical to what was written.
     """
     target = Path(target_path)
-    target.parent.mkdir(parents=True, exist_ok = True)
-
+    target.parent.mkdir(parents=True, exist_ok=True)
     part_path = target.with_name(f"{target.name}.part")
-    
+    data = content.encode(encoding)
+
     try:
-        with open(part_path, "w", encoding=encoding) as file:
-            file.write(content)
+        with open(part_path, "wb") as file:
+            file.write(data)
             file.flush()
             os.fsync(file.fileno())
-
         os.replace(part_path, target)
-        dir_fd = os.open(target.parent, os.O_RDONLY)
-        
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-
-    except Exception:
-        if part_path.exists():
-            part_path.unlink()
+    except BaseException:
+        part_path.unlink(missing_ok=True)
         raise
 
+    _fsync_dir(target.parent)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Persist the rename on POSIX. Windows cannot open a directory; there
+    the rename is durable on its own, so a failure here is not an error."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

@@ -19,6 +19,12 @@ def test_atomic_write_creates_file(tmp_path: Path):
     part_file = target.with_name(f"{target.name}.part")
     assert not part_file.exists()
 
+def test_atomic_write_keeps_exact_bytes(tmp_path: Path):
+    # Text mode on Windows would store "\r\n"; the round-trip must be byte-exact.
+    target = tmp_path / "lf.txt"
+    atomic_write(target, "line one\nline two\n")
+    assert target.read_bytes() == b"line one\nline two\n"
+
 def test_atomic_write_overwrites_existing(tmp_path: Path):
     target = tmp_path / "file.txt"
     atomic_write(target, "First")
