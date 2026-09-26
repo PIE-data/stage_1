@@ -67,7 +67,7 @@ SPEC_VERSION_FILE = REPO / "spec" / "SPEC_VERSION"
 # The specification this code implements.  SPEC.md line 10: an implementation
 # refuses to run when this differs from spec/SPEC_VERSION, so a spec change
 # that nobody ported fails loudly instead of producing subtly different output.
-SUPPORTED_SPEC_VERSION = "1.1.2"
+SUPPORTED_SPEC_VERSION = "1.1.3"
 STOPWORDS_FILE = REPO / "spec" / "stopwords_en.txt"
 
 LAYOUTS = ("time", "book", "hash")
@@ -77,16 +77,19 @@ BACKENDS = ("json", "folder", "sqlite", "mongo")
 # owns them.  Keeping them here makes `engine <cmd> --help` honest.
 PENDING = {
     "metadata": "issue #4 (metadata datamart, PR #81)",
-    "control-step": "issue #5 (control layer)",
-    "reconcile": "issue #5 (control layer)",
 }
 
 # Commands that write a --metrics-out record.  `version` is not a measurement.
-MEASURED = ("download", "split", "index", "lookup", "scan-new", "query", "export-canonical")
+MEASURED = ("download", "split", "index", "lookup", "scan-new", "control-step",
+            "reconcile", "query", "export-canonical")
+
+# Commands that write to the workspace hold control/run.lock (exit 4 if taken).
+WRITERS = ("download", "split", "index", "control-step", "reconcile")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
+EXIT_LOCKED = 4
 
 
 # --------------------------------------------------------------------- query
@@ -294,6 +297,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("split")
     sp.add_argument("--book-id", type=int, required=True)
 
+    cs = sub.add_parser("control-step")
+    cs.add_argument("--iterations", type=int, required=True)
+    cs.add_argument("--total-books", type=int, default=70000)
+    cs.add_argument("--manifest", default=None, help="candidate ids, in order")
+    cs.add_argument("--source-base", default="https://www.gutenberg.org")
+
+    sub.add_parser("reconcile")
+
     for name, owner in PENDING.items():
         # No flags declared: whatever the caller passes is accepted and
         # ignored, so a script written against SPEC.md §1 gets the honest
@@ -311,7 +322,8 @@ def _dispatch(args, aux: dict) -> int:
         return cmd_query(args)
     if args.command == "export-canonical":
         return cmd_export_canonical(args)
-    if args.command in ("download", "split", "index", "lookup", "scan-new"):
+    if args.command in ("download", "split", "index", "lookup", "scan-new",
+                        "control-step", "reconcile"):
         import pipeline
 
         handler = {
@@ -320,6 +332,8 @@ def _dispatch(args, aux: dict) -> int:
             "index": pipeline.cmd_index,
             "lookup": pipeline.cmd_lookup,
             "scan-new": pipeline.cmd_scan_new,
+            "control-step": pipeline.cmd_control_step,
+            "reconcile": pipeline.cmd_reconcile,
         }[args.command]
         return handler(args, aux)
     return cmd_pending(args)
@@ -331,6 +345,19 @@ def _run_measured(args) -> int:
     The clock covers the command only: parsing, the spec-version check and
     writing the record itself are outside it.
     """
+    if args.command in WRITERS:
+        from control_layer import WorkspaceLock, WorkspaceLocked
+
+        try:
+            with WorkspaceLock(args.workspace):
+                return _run_timed(args)
+        except WorkspaceLocked as exc:
+            print(f"workspace locked: {exc}", file=sys.stderr)
+            return EXIT_LOCKED
+    return _run_timed(args)
+
+
+def _run_timed(args) -> int:
     aux: dict = {}
     if not args.metrics_out or args.command not in MEASURED:
         return _dispatch(args, aux)

@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.2
+SPEC_VERSION = 1.1.3
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -39,7 +39,7 @@ COMMANDS
   query      --terms "<t1> <t2> ..." --mode and|or  [--limit N]
   lookup     --book-id <id>                       resolve + read body via datalake layout
   scan-new                                        list ids present in datalake, absent from indexed
-  control-step --iterations N [--total-books 70000]
+  control-step --iterations N [--total-books 70000] [--manifest <path>] [--source-base <url>]
   reconcile                                       repair control files from datalake contents
   export-canonical --out <path>                   emit the canonical index (see §7)
 ```
@@ -92,6 +92,24 @@ Not found: nothing on `stdout`, exit `3`. E2 therefore measures resolving *and* 
 
 **`scan-new`** prints the ids present in the datalake and absent from `indexed_books.txt`, one per line,
 ascending.
+
+**`control-step --iterations N`** moves **one book one stage forward** per iteration: if any book is
+downloaded and not indexed, the smallest such id is indexed; otherwise the next candidate is downloaded
+exactly as `download` would. Candidates are the ids of `--manifest` in file order, else `1..--total-books`
+ascending; ids already downloaded or listed in `failed_books.txt` are skipped, so a failed book is never
+retried. No randomness — the three languages pick the same books in the same order. The run stops early,
+with no write, when nothing is left (I4). The index keeps positions unless it already exists without
+them. Exit `0` even when books fail; failures are in `failed_books.txt`.
+
+**`reconcile`** rewrites `downloaded_books.txt` as exactly the ids whose header **and** body are in the
+datalake (ascending, no duplicates), restricts `indexed_books.txt` to those ids, and deletes leftover
+`*.part` files. It is the recovery path for a crash between an artifact's rename and the control-file
+append (§2.4).
+
+**`run.lock`.** `download`, `split`, `index`, `control-step` and `reconcile` hold `control/run.lock` for
+their whole run; a second writer exits `4`. It **MUST** be an operating-system lock on an open file
+(`flock` / `LockFileEx`), not "the file exists", so that it is released when the process dies — a lock
+that survives a `SIGKILL` would block the restart that invariant I3 tests. Read-only commands take no lock.
 
 ---
 
@@ -371,7 +389,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.2",
+  "spec_version":  "1.1.3",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
