@@ -1,0 +1,3 @@
+The Python CLI implements download, index and export-canonical (SPEC.md §1, §1.2),
+so the conformance gate (tools/run_conformance.sh, issue #61) runs it on all
+3 backends x 3 layouts. Porters: add this file to src/<lang>/ when your CLI does too.
