@@ -11,19 +11,8 @@ pieces that already exist and are tested on their own:
     datamart.index_*      the three index backends        (SPEC.md §6)
     core.control_layer    downloaded / indexed / failed   (SPEC.md §2.4)
 
-Decisions SPEC.md does not make and this file had to (listed so the Node and
-Go ports can follow them, and so they can go into the spec):
-
-  * download --manifest keeps going when a book fails: the failure is recorded
-    in control/failed_books.txt and the run exits 3 at the end if any book
-    was NOT_FOUND or NO_MARKERS, 1 if any failed for a network reason.
-  * a book already in downloaded_books.txt is skipped without a request
-    (invariant I4: re-running on a complete corpus performs zero writes).
-  * lookup prints `<header_path>\\t<body_path>` (relative, forward slashes) and
-    reads the body, so experiment E2 measures resolving AND reading.
-  * index records whether the index was built with --positions in
-    datamarts/index_settings.json; adding to an index built the other way is
-    a usage error, and export-canonical reads the setting instead of assuming.
+The shared behaviour of these commands -- exit codes, what `lookup` prints,
+the raw cache, the positions rule -- is SPEC.md §1.2; this file follows it.
 """
 
 from __future__ import annotations
@@ -35,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from control_layer import StateTracker
+from datalake.atomic import atomic_write
 from datalake.batch_storage import BatchBasedStorage
 from datalake.book_storage import BookBasedStorage
 from datalake.splitter import MarkersNotFound, split_text
@@ -71,6 +61,11 @@ def make_storage(layout: str, workspace: Path, now: datetime | None = None):
     if layout == "hash":
         return BatchBasedStorage(workspace)
     raise ValueError(f"unknown datalake layout: {layout!r}")
+
+
+def raw_path(workspace: Path, book_id: int) -> Path:
+    """SPEC.md §1.2: the decoded download, kept for `split`."""
+    return workspace / "raw" / f"{book_id}.txt"
 
 
 def read_manifest(path: str | Path) -> list[int]:
@@ -135,6 +130,7 @@ def cmd_download(args, aux: dict) -> int:
             return book_id, "NOT_FOUND"
         except Exception:  # retries exhausted, connection refused, ...
             return book_id, "DOWNLOAD_ERROR"
+        atomic_write(raw_path(workspace, book_id), raw)  # SPEC.md §1.2
         try:
             header, body = split_text(raw)
         except MarkersNotFound:
@@ -165,6 +161,36 @@ def cmd_download(args, aux: dict) -> int:
     if any(reason == "DOWNLOAD_ERROR" for _, reason in failures):
         return EXIT_ERROR
     return EXIT_NOT_FOUND if failures else EXIT_OK
+
+
+# ------------------------------------------------------------------ split
+
+
+def cmd_split(args, aux: dict) -> int:
+    """Re-split the cached raw file offline (SPEC.md §1.2)."""
+    workspace = Path(args.workspace)
+    try:
+        now = parse_now(args.now)
+    except ValueError:
+        print(f"--now is not ISO8601: {args.now!r}", file=sys.stderr)
+        return EXIT_USAGE
+    source = raw_path(workspace, args.book_id)
+    if not source.exists():
+        print(f"no cached raw file for book {args.book_id}: {source}", file=sys.stderr)
+        return EXIT_NOT_FOUND
+
+    tracker = StateTracker(workspace)
+    try:
+        header, body = split_text(source.read_bytes().decode("utf-8"))
+    except MarkersNotFound:
+        tracker.mark_failed(args.book_id, "NO_MARKERS")
+        print(f"book {args.book_id}: markers not found", file=sys.stderr)
+        return EXIT_NOT_FOUND
+    storage = make_storage(args.datalake_layout, workspace, now)
+    storage.write(args.book_id, header, body)
+    tracker.mark_downloaded(args.book_id)
+    aux.update(body_bytes=len(body.encode("utf-8")))
+    return EXIT_OK
 
 
 # ------------------------------------------------------------------ index
