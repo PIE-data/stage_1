@@ -40,3 +40,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# --- benchmark scratch -----------------------------------------------
+results/smoke/

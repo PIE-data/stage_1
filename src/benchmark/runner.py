@@ -1,144 +1,528 @@
 #!/usr/bin/env python3
 """
-Benchmark runner for Stage 1.
+Benchmark runner for Stage 1.  Issues #22, #71, #72.
+
+Started by Marcela (repetitions, warm-up, cold cache, external peak RSS);
+extended with a setup phase outside the timer, the experiment matrix, external
+wall-clock timing and aggregation.  docs/TASKS.md, "Protocol" and "Two
+measurement layers", is the contract this file implements.
+
+What it measures -- the MACRO layer: whole CLI commands, timed from outside,
+identical for every language.  Lookup (E2) and query (E7) are too short for
+that and are micro-benchmarked inside each language instead.
+
+    python3 src/benchmark/runner.py --smoke
+        20 golden books, 1 repetition: checks the machinery in a minute.
+
+    python3 src/benchmark/runner.py --experiments E1,E3,E5,E6,E8 \\
+        --languages python --tiers 100,1000 --reps 5
+        the real thing.  Run `sudo -v` first so the cold-cache drop works.
+
+Output
+    results/raw.jsonl     one SPEC.md §8 record per measured repetition
+    results/summary.csv   median, IQR, min, max per configuration
+
+Protocol, applied to every language alike
+  * 1 warm-up run discarded (--warmup), then --reps measured runs;
+  * every run starts from a workspace prepared OUTSIDE the timer
+    (clean, or a copy of a prepared snapshot) -- teardown is never timed;
+  * page cache dropped before each measured run (needs sudo; if it cannot,
+    the records say cache="warm" instead of pretending);
+  * wall time from time.perf_counter_ns() around the child process, peak RSS
+    from /usr/bin/time on the child -- never self-reported (SPEC.md §8);
+  * all downloads hit tools/mirror_server.py, never the live network.
 """
 
+from __future__ import annotations
+
 import argparse
+import csv
 import json
 import os
 import shutil
+import socket
+import statistics
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-# Number of total runs (1 warmup + 2 actual measurements)
-REPETITIONS = 3
+REPO = Path(__file__).resolve().parents[2]
+NOW = "2026-01-01T00:00:00Z"  # fixed --now: the time layout lands in one place
+SPEC_VERSION = (REPO / "spec" / "SPEC_VERSION").read_text(encoding="utf-8").strip()
 
-def drop_system_caches() -> None:
+LANGUAGES = ("python", "node", "go")
+LAYOUTS = ("time", "book", "hash")
+BACKENDS = ("json", "folder", "sqlite")
+
+
+class RunFailed(RuntimeError):
+    pass
+
+
+# ---------------------------------------------------------------- Marcela
+
+
+def drop_system_caches(state: dict) -> None:
     """
     Clears the OS pagecache, dentries, and inodes to ensure a 'cold cache' run.
-    Requires root/sudo privileges on Linux/WSL2.
+    Requires root/sudo privileges on Linux/WSL2 (run `sudo -v` first).
     """
-    print("[RUNNER] Dropping OS caches (cold cache)...", file=sys.stderr)
+    if state.get("cache") == "warm":
+        return  # already known not to work: don't retry every run
     try:
-        # Run sync first to flush pending writes
         subprocess.run(["sync"], check=True)
-        # Drop caches
-        subprocess.run(
-            ["sudo", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"], 
-            check=True
-        )
-    except subprocess.CalledProcessError:
-        print("[RUNNER] WARNING: Failed to drop caches. Are you running with sudo?", file=sys.stderr)
+        # `tee` rather than `sh -c`, so one narrow sudoers rule is enough for
+        # unattended runs:  <user> ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches
+        subprocess.run(["sudo", "-n", "tee", "/proc/sys/vm/drop_caches"], input=b"3\n",
+                       check=True, capture_output=True)
+        state["cache"] = "cold"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("[RUNNER] WARNING: cannot drop caches (run `sudo -v` first). "
+              "Continuing with a WARM cache; records say so.", file=sys.stderr)
+        state["cache"] = "warm"
+
 
 def clean_workspace(workspace: Path) -> None:
-    """
-    Deletes datalake, datamarts, and control directories from the workspace.
-    This time is specifically EXCLUDED from the benchmark timer.
-    """
-    print(f"[RUNNER] Cleaning workspace: {workspace}", file=sys.stderr)
-    for sub in ("datalake", "datamarts", "control", "raw"):
-        target = workspace / sub
-        if target.exists():
-            shutil.rmtree(target)
+    """Deletes the workspace.  Always called outside the timer."""
+    if workspace.exists():
+        shutil.rmtree(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
 
-def run_iteration(cmd: list[str], workspace: Path, metrics_file: Path, 
-                  experiment: str, repetition: int, is_warmup: bool) -> None:
-    """
-    Executes a single run of the pipeline command.
-    """
-    clean_workspace(workspace)
-    
-    if not is_warmup:
-        drop_system_caches()
-    else:
-        print("[RUNNER] Starting WARM-UP run (results will be ignored)...", file=sys.stderr)
 
-    # Set environment variables expected by CLI (e.g. test_pipeline.py format)
-    env = os.environ.copy()
-    env["BENCH_EXPERIMENT"] = experiment
-    env["BENCH_REPETITION"] = str(repetition)
+# ---------------------------------------------------------------- engines
 
-    # If it's a measured run, wrap the command in `/usr/bin/time -f "%M"` 
-    # to capture external Peak RSS in kilobytes
-    rss_kb = None
-    if not is_warmup:
-        print(f"[RUNNER] Starting measured run {repetition}...", file=sys.stderr)
-        time_cmd = ["/usr/bin/time", "-f", "PEAK_RSS_KB:%M"] + cmd
-        
-        process = subprocess.run(
-            time_cmd, env=env, capture_output=True, text=True
-        )
-        
-        # Parse RSS from stderr
-        for line in process.stderr.splitlines():
-            if line.startswith("PEAK_RSS_KB:"):
-                rss_kb = int(line.split(":")[1].strip())
+
+class Engines:
+    """The command line of each implementation (SPEC.md §9)."""
+
+    def __init__(self, build_dir: Path) -> None:
+        self.build_dir = build_dir
+        self._cache: dict[str, list[str]] = {}
+
+    def __call__(self, lang: str) -> list[str]:
+        if lang not in self._cache:
+            if lang == "python":
+                self._cache[lang] = [sys.executable, str(REPO / "src/python/cli.py")]
+            elif lang == "node":
+                self._cache[lang] = ["node", str(REPO / "src/node/cli.js")]
+            elif lang == "go":
+                self.build_dir.mkdir(parents=True, exist_ok=True)
+                out = self.build_dir / "engine-go"
+                subprocess.run(["go", "build", "-o", str(out), "./cmd/engine"],
+                               cwd=REPO / "src/go", check=True)
+                self._cache[lang] = [str(out)]
             else:
-                print(line, file=sys.stderr)
-                
-        if process.returncode != 0:
-            print(process.stdout, file=sys.stdout)
-            print(f"[RUNNER] Command failed with code {process.returncode}", file=sys.stderr)
-            sys.exit(process.returncode)
-    else:
-        # Just run it normally for warmup
-        subprocess.run(cmd, env=env, check=True)
+                raise ValueError(lang)
+        return self._cache[lang]
 
-    # Inject peak RSS into the last JSONL record written by cli.py
-    if not is_warmup and rss_kb is not None and metrics_file.exists():
-        lines = metrics_file.read_text(encoding="utf-8").splitlines()
-        if lines:
-            last_record = json.loads(lines[-1])
-            # Ensure aux dictionary exists
-            if "aux" not in last_record:
-                last_record["aux"] = {}
-            # Convert KB to Bytes (1 KB = 1024 Bytes)
-            last_record["aux"]["peak_rss_bytes"] = rss_kb * 1024
-            
-            lines[-1] = json.dumps(last_record)
-            metrics_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"[RUNNER] Captured Peak RSS: {rss_kb * 1024} bytes", file=sys.stderr)
+
+def cli(engine: list[str], ws: Path, layout: str, backend: str, *args: str) -> list[str]:
+    return [*engine, "--workspace", str(ws), "--datalake-layout", layout,
+            "--index-backend", backend, "--now", NOW, *args]
+
+
+def run_measured(cmd: list[str], env: dict) -> tuple[int, float, int | None, str]:
+    """Run once: (exit code, wall ms, peak RSS bytes or None, stderr)."""
+    timer = ["/usr/bin/time", "-f", "PEAK_RSS_KB:%M"] if Path("/usr/bin/time").exists() else []
+    t0 = time.perf_counter_ns()
+    proc = subprocess.run(timer + cmd, env=env, capture_output=True, text=True)
+    wall_ms = (time.perf_counter_ns() - t0) / 1e6
+    rss = None
+    kept = []
+    for line in proc.stderr.splitlines():
+        if line.startswith("PEAK_RSS_KB:"):
+            rss = int(line.split(":", 1)[1]) * 1024
+        else:
+            kept.append(line)
+    return proc.returncode, wall_ms, rss, "\n".join(kept)
+
+
+def run_setup(cmd: list[str], env: dict) -> None:
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RunFailed(f"setup failed ({proc.returncode}): {' '.join(cmd)}\n"
+                        f"{proc.stderr[-2000:]}")
+
+
+# ------------------------------------------------------------------ disk
+
+
+def tree_stats(root: Path) -> dict:
+    files = dirs = size = 0
+    if root.exists():
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirs += len(dirnames)
+            for f in filenames:
+                files += 1
+                size += os.path.getsize(os.path.join(dirpath, f))
+    return {"files": files, "dirs": dirs, "bytes": size}
+
+
+def copy_snapshot(src: Path, dst: Path) -> None:
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst, symlinks=True)
+    lock = dst / "control" / "run.lock"
+    lock.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------- runner
+
+
+class Runner:
+    def __init__(self, args) -> None:
+        self.args = args
+        self.work = Path(args.work).expanduser().resolve()
+        self.results = Path(args.results).resolve()
+        self.results.mkdir(parents=True, exist_ok=True)
+        self.raw = self.results / "raw.jsonl"
+        self.engines = Engines(self.work / ".build")
+        self.state: dict = {}
+        self.run_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+        self.env = dict(os.environ, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+        self.impl_version = self._git_rev()
+        self.snapshots = self.work / ".snapshots"
+        self.manifests = self.work / ".manifests"
+        self.manifests.mkdir(parents=True, exist_ok=True)
+        self.mirror_proc = None
+        self.base = ""
+
+    # -------------------------------------------------------- environment
+
+    def _git_rev(self) -> str:
+        try:
+            rev = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+            return f"git:{rev}"
+        except (OSError, subprocess.CalledProcessError):
+            return "unknown"
+
+    def preflight(self) -> None:
+        if str(self.work).startswith("/mnt/"):
+            sys.exit(f"[RUNNER] {self.work} is on the Windows drive (NTFS): FolderIndex "
+                     "merges terms that differ only in case there. Use a path under ~.")
+        free_gb = shutil.disk_usage(self.work).free / 1e9
+        print(f"[RUNNER] work dir {self.work}, {free_gb:.0f} GB free "
+              "(inside WSL this is the virtual disk's limit; check the host drive too)",
+              file=sys.stderr)
+        if free_gb < self.args.min_free_gb:
+            sys.exit(f"[RUNNER] less than {self.args.min_free_gb} GB free: aborting")
+
+    def start_mirror(self, root: Path) -> None:
+        port_file = self.work / ".mirror-port"
+        port_file.unlink(missing_ok=True)
+        self.mirror_proc = subprocess.Popen(
+            [sys.executable, str(REPO / "tools/mirror_server.py"), "--root", str(root),
+             "--port-file", str(port_file)], stdout=subprocess.DEVNULL)
+        for _ in range(100):
+            if port_file.exists() and port_file.read_text().strip():
+                break
+            time.sleep(0.1)
+        else:
+            raise RunFailed("mirror server did not start")
+        self.base = f"http://127.0.0.1:{port_file.read_text().strip()}"
+
+    def stop_mirror(self) -> None:
+        if self.mirror_proc:
+            self.mirror_proc.terminate()
+            self.mirror_proc.wait()
+
+    # ---------------------------------------------------------- corpora
+
+    def tier_ids(self, tier: int) -> list[int]:
+        if self.args.smoke:
+            ids = [int(x) for x in (REPO / "spec/golden/manifest_20.txt").read_text().split()]
+            return ids[:15]
+        path = REPO / "spec" / "corpus" / f"manifest_{tier}.txt"
+        return [int(x) for x in path.read_text().split() if x.strip()]
+
+    def extra_ids(self, tier: int, n: int = 50) -> list[int]:
+        """Books to add on top of a tier (E3, E8): the next ones not in it."""
+        if self.args.smoke:
+            ids = [int(x) for x in (REPO / "spec/golden/manifest_20.txt").read_text().split()]
+            return ids[15:]
+        have = set(self.tier_ids(tier))
+        pool = (REPO / "spec/corpus/manifest_10000.txt").read_text().split()
+        return [int(x) for x in pool if int(x) not in have][:n]
+
+    def manifest(self, name: str, ids: list[int]) -> Path:
+        path = self.manifests / f"{name}.txt"
+        path.write_text("".join(f"{i}\n" for i in ids))
+        return path
+
+    def py(self) -> list[str]:
+        return self.engines("python")
+
+    def datalake_snapshot(self, layout: str, tier: int) -> Path:
+        """A workspace holding the tier downloaded in `layout`, built once with
+        the Python reference.  Conformance guarantees every language would
+        produce the same datalake, so the setup is language-neutral."""
+        snap = self.snapshots / f"datalake-{layout}-{tier}"
+        if not (snap / "control" / "downloaded_books.txt").exists():
+            clean_workspace(snap)
+            m = self.manifest(f"tier-{tier}", self.tier_ids(tier))
+            run_setup(cli(self.py(), snap, layout, "json", "download", "--manifest", str(m),
+                          "--workers", "8", "--source-base", self.base), self.env)
+        return snap
+
+    def indexed_snapshot(self, backend: str, tier: int) -> Path:
+        """hash-layout tier, indexed with `backend`, plus extra books downloaded
+        but not indexed: the starting point of E8."""
+        snap = self.snapshots / f"indexed-{backend}-{tier}"
+        if not (snap / "control" / "indexed_books.txt").exists():
+            copy_snapshot(self.datalake_snapshot("hash", tier), snap)
+            run_setup(cli(self.py(), snap, "hash", backend, "index", "--all", "--positions"),
+                      self.env)
+            m = self.manifest(f"extra-{tier}", self.extra_ids(tier))
+            run_setup(cli(self.py(), snap, "hash", backend, "download", "--manifest", str(m),
+                          "--source-base", self.base), self.env)
+        return snap
+
+    # ---------------------------------------------------------- records
+
+    def record(self, *, experiment, metric, value, unit, lang, layout, backend, tier,
+               workers=None, rep=None, positions=None, aux=None) -> dict:
+        rec = {
+            "run_id": self.run_id, "spec_version": SPEC_VERSION, "language": lang,
+            "impl_version": self.impl_version, "experiment": experiment,
+            "datalake_layout": layout, "index_backend": backend, "positions": positions,
+            "corpus_size": tier, "workers": workers, "batch_size": 500 if backend else None,
+            "repetition": rep, "metric": metric, "value": round(value, 3), "unit": unit,
+            "aux": {"layer": "macro", "cache": self.state.get("cache", "n/a"), **(aux or {})},
+            "machine_id": self.args.machine_id,
+            "started_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        }
+        with open(self.raw, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        return rec
+
+    def measure(self, *, experiment, lang, layout, backend, tier, setup, argv,
+                ws, workers=None, positions=None, post=None, ok=(0,)) -> None:
+        label = f"{experiment} {lang} {layout or '-'} {backend or '-'} n={tier}" + \
+                (f" w={workers}" if workers else "")
+        for r in range(self.args.warmup + self.args.reps):
+            setup()                                         # outside the timer
+            measured = r >= self.args.warmup
+            if measured:
+                drop_system_caches(self.state)
+            code, wall, rss, err = run_measured(argv, self.env)
+            if code not in ok:
+                raise RunFailed(f"{label}: exit {code}\n{err[-2000:]}")
+            if not measured:
+                print(f"[RUNNER] {label}  warm-up {wall:9.1f} ms", file=sys.stderr)
+                continue
+            aux = {"peak_rss_bytes": rss}
+            if post:
+                aux.update(post())
+            self.record(experiment=experiment, metric="wall_time", value=wall, unit="ms",
+                        lang=lang, layout=layout, backend=backend, tier=tier,
+                        workers=workers, rep=r - self.args.warmup + 1,
+                        positions=positions, aux=aux)
+            print(f"[RUNNER] {label}  rep {r - self.args.warmup + 1} {wall:9.1f} ms  "
+                  f"rss {rss and rss // 2**20} MiB", file=sys.stderr)
+
+    # ------------------------------------------------------ experiments
+
+    def e1(self, tiers, experiment="E1", workers_list=None) -> None:
+        """Download and write throughput: lang x layout x workers."""
+        for tier in tiers:
+            m = self.manifest(f"tier-{tier}", self.tier_ids(tier))
+            for lang in self.args.languages:
+                for layout in self.args.layouts:
+                    for w in workers_list or self.args.workers:
+                        ws = self.work / "ws"
+                        self.measure(
+                            experiment=experiment, lang=lang, layout=layout, backend=None,
+                            tier=tier, workers=w, ws=ws, setup=lambda: clean_workspace(ws),
+                            argv=cli(self.engines(lang), ws, layout, "json", "download",
+                                     "--manifest", str(m), "--workers", str(w),
+                                     "--source-base", self.base))
+
+    def e3(self, tiers) -> None:
+        """Incremental processing: a complete tier + 50 new books."""
+        for tier in tiers:
+            m = self.manifest(f"tier+extra-{tier}", self.tier_ids(tier) + self.extra_ids(tier))
+            for layout in self.args.layouts:
+                snap = self.datalake_snapshot(layout, tier)
+                for lang in self.args.languages:
+                    ws = self.work / "ws"
+                    self.measure(
+                        experiment="E3", lang=lang, layout=layout, backend=None, tier=tier,
+                        workers=1, ws=ws, setup=lambda s=snap: copy_snapshot(s, ws),
+                        argv=cli(self.engines(lang), ws, layout, "json", "download",
+                                 "--manifest", str(m), "--source-base", self.base))
+
+    def e5(self, tiers) -> None:
+        """Storage overhead of each layout (language-independent)."""
+        for tier in tiers:
+            for layout in self.args.layouts:
+                stats = tree_stats(self.datalake_snapshot(layout, tier) / "datalake")
+                n = len(self.tier_ids(tier))
+                self.record(experiment="E5", metric="storage_bytes", value=stats["bytes"],
+                            unit="bytes", lang="python", layout=layout, backend=None,
+                            tier=tier, aux={**stats, "bytes_per_book": stats["bytes"] / n})
+                print(f"[RUNNER] E5 {layout} n={tier}: {stats}", file=sys.stderr)
+
+    def e6(self, tiers, experiment="E6") -> None:
+        """Index build: lang x backend on the hash layout.  E9 rides along:
+        peak RSS and the size of the index on disk."""
+        for tier in tiers:
+            snap = self.datalake_snapshot("hash", tier)
+            for lang in self.args.languages:
+                for backend in self.args.backends:
+                    ws = self.work / "ws"
+                    self.measure(
+                        experiment=experiment, lang=lang, layout="hash", backend=backend,
+                        tier=tier, ws=ws, positions=True,
+                        setup=lambda: copy_snapshot(snap, ws),
+                        post=lambda: {f"index_{k}": v for k, v in
+                                      tree_stats(ws / "datamarts").items()},
+                        argv=cli(self.engines(lang), ws, "hash", backend, "index", "--all",
+                                 "--positions"))
+
+    def e8(self, tiers) -> None:
+        """Update: +50 books onto an indexed tier."""
+        for tier in tiers:
+            for backend in self.args.backends:
+                snap = self.indexed_snapshot(backend, tier)
+                for lang in self.args.languages:
+                    ws = self.work / "ws"
+                    self.measure(
+                        experiment="E8", lang=lang, layout="hash", backend=backend, tier=tier,
+                        ws=ws, positions=True, setup=lambda s=snap: copy_snapshot(s, ws),
+                        argv=cli(self.engines(lang), ws, "hash", backend, "index", "--all",
+                                 "--positions"))
+
+    def e4(self, tiers) -> None:
+        """Recovery: SIGKILL half-way through a download, then reconcile and resume."""
+        for tier in tiers:
+            ids = self.tier_ids(tier)
+            m = self.manifest(f"tier-{tier}", ids)
+            for lang in self.args.languages:
+                for layout in self.args.layouts:
+                    for rep in range(1, self.args.reps + 1):
+                        ws = self.work / "ws"
+                        clean_workspace(ws)
+                        eng = self.engines(lang)
+                        child = subprocess.Popen(
+                            cli(eng, ws, layout, "json", "download", "--manifest", str(m),
+                                "--source-base", self.base),
+                            env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        done = ws / "control" / "downloaded_books.txt"
+                        while child.poll() is None:
+                            if done.exists() and len(done.read_text().split()) >= len(ids) // 2:
+                                child.kill()
+                                break
+                            time.sleep(0.01)
+                        child.wait()
+                        listed = done.read_text().split() if done.exists() else []
+                        bodies = {p.name.split(".")[0] for p in (ws / "datalake").rglob("*body.txt")} \
+                            if layout != "book" else \
+                            {p.parent.name for p in (ws / "datalake").rglob("body.txt")}
+                        before = {"listed": len(listed), "duplicates": len(listed) - len(set(listed)),
+                                  "unrecorded_on_disk": len(bodies - set(listed)),
+                                  "recorded_missing": len(set(listed) - bodies)}
+                        t0 = time.perf_counter_ns()
+                        run_setup(cli(eng, ws, layout, "json", "reconcile"), self.env)
+                        run_setup(cli(eng, ws, layout, "json", "download", "--manifest", str(m),
+                                      "--source-base", self.base), self.env)
+                        wall = (time.perf_counter_ns() - t0) / 1e6
+                        final = done.read_text().split()
+                        after = {"final_listed": len(final),
+                                 "final_duplicates": len(final) - len(set(final)),
+                                 "final_lost": len(set(map(str, ids)) - set(final))}
+                        self.record(experiment="E4", metric="recovery_time", value=wall,
+                                    unit="ms", lang=lang, layout=layout, backend=None,
+                                    tier=tier, rep=rep, aux={**before, **after})
+                        print(f"[RUNNER] E4 {lang} {layout} rep {rep}: {before} -> {after}",
+                              file=sys.stderr)
+
+    # ---------------------------------------------------------- summary
+
+    def summarize(self) -> Path:
+        rows: dict[tuple, list[dict]] = {}
+        for line in self.raw.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line)
+            key = (r["experiment"], r["metric"], r["unit"], r["language"],
+                   r["datalake_layout"] or "", r["index_backend"] or "",
+                   r["corpus_size"], r["workers"] or "")
+            rows.setdefault(key, []).append(r)
+        out = self.results / "summary.csv"
+        with open(out, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["experiment", "metric", "unit", "language", "layout", "backend",
+                        "corpus_size", "workers", "n", "median", "q1", "q3", "iqr",
+                        "min", "max", "median_peak_rss_mib", "cache"])
+            for key, recs in sorted(rows.items(), key=lambda kv: tuple(map(str, kv[0]))):
+                vals = sorted(r["value"] for r in recs)
+                q1, q3 = (statistics.quantiles(vals, n=4, method="inclusive")[::2]
+                          if len(vals) > 1 else (vals[0], vals[0]))
+                rss = [r["aux"].get("peak_rss_bytes") for r in recs
+                       if r["aux"].get("peak_rss_bytes")]
+                w.writerow([*key, len(vals), round(statistics.median(vals), 3), round(q1, 3),
+                            round(q3, 3), round(q3 - q1, 3), vals[0], vals[-1],
+                            round(statistics.median(rss) / 2**20, 1) if rss else "",
+                            "/".join(sorted({r["aux"].get("cache", "") for r in recs}))])
+        return out
+
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Stage 1 Benchmark Runner")
-    parser.add_argument("--experiment", required=True, help="Experiment ID (e.g., E1, E6)")
-    parser.add_argument("--workspace", required=True, help="Path to the clean workspace")
-    parser.add_argument("--metrics-out", required=True, help="Path to output metrics JSONL")
-    parser.add_argument("cmd", nargs=argparse.REMAINDER, help="CLI command to run (e.g. python3 src/python/cli.py ...)")
-    
-    args = parser.parse_args()
-    workspace = Path(args.workspace)
-    metrics_file = Path(args.metrics_out)
-    cmd = args.cmd
+    ap = argparse.ArgumentParser(description="Stage 1 benchmark runner")
+    ap.add_argument("--experiments", default="E1,E3,E4,E5,E6,E8",
+                    help="comma list of E1,E3,E4,E5,E6,E8,E10,E11")
+    ap.add_argument("--languages", default="python")
+    ap.add_argument("--layouts", default=",".join(LAYOUTS))
+    ap.add_argument("--backends", default=",".join(BACKENDS))
+    ap.add_argument("--tiers", default="100,1000")
+    ap.add_argument("--scaling-tiers", default="100,1000,10000", help="for E10 and E11")
+    ap.add_argument("--workers", default="1,8")
+    ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--warmup", type=int, default=1)
+    ap.add_argument("--work", default="~/bench/work")
+    ap.add_argument("--results", default=str(REPO / "results"))
+    ap.add_argument("--mirror", default=str(REPO / "infra/mirror"))
+    ap.add_argument("--min-free-gb", type=float, default=20)
+    ap.add_argument("--machine-id", default=socket.gethostname())
+    ap.add_argument("--smoke", action="store_true",
+                    help="golden books, 1 rep, no warm-up: checks the machinery")
+    args = ap.parse_args()
 
-    # argparse sometimes leaves '--' in the remainder
-    if cmd and cmd[0] == "--":
-        cmd = cmd[1:]
+    split = lambda s: [x.strip() for x in s.split(",") if x.strip()]  # noqa: E731
+    args.languages, args.layouts, args.backends = (split(args.languages),
+                                                   split(args.layouts), split(args.backends))
+    args.workers = [int(x) for x in split(args.workers)]
+    tiers = [int(x) for x in split(args.tiers)]
+    scaling = [int(x) for x in split(args.scaling_tiers)]
+    if args.smoke:
+        args.reps, args.warmup, args.mirror = 1, 0, str(REPO / "spec/golden")
+        args.results = str(Path(args.results) / "smoke")
+        tiers = scaling = [15]  # 15 golden books + 5 extra for E3 and E8
 
-    if not cmd:
-        print("[RUNNER] Error: No command provided to run.", file=sys.stderr)
+    runner = Runner(args)
+    runner.preflight()
+    runner.start_mirror(Path(args.mirror))
+    try:
+        for exp in split(args.experiments):
+            print(f"=== {exp} ===", file=sys.stderr)
+            {"E1": lambda: runner.e1(tiers),
+             "E3": lambda: runner.e3(tiers),
+             "E4": lambda: runner.e4(tiers),
+             "E5": lambda: runner.e5(tiers),
+             "E6": lambda: runner.e6(tiers),
+             "E8": lambda: runner.e8(tiers),
+             "E10": lambda: runner.e1(scaling, "E10", [1]),
+             "E11": lambda: runner.e6(scaling, "E11")}[exp]()
+    except RunFailed as exc:
+        print(f"[RUNNER] FAILED: {exc}", file=sys.stderr)
         return 1
-
-    # Ensure output directory exists
-    metrics_file.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"=== Starting Experiment: {args.experiment} ===", file=sys.stderr)
-    
-    for rep in range(1, REPETITIONS + 1):
-        is_warmup = (rep == 1)
-        run_iteration(
-            cmd=cmd,
-            workspace=workspace,
-            metrics_file=metrics_file,
-            experiment=args.experiment,
-            repetition=rep,
-            is_warmup=is_warmup
-        )
-
-    print(f"=== Experiment {args.experiment} completed successfully ===", file=sys.stderr)
+    finally:
+        runner.stop_mirror()
+        if runner.raw.exists():
+            print(f"[RUNNER] summary -> {runner.summarize()}", file=sys.stderr)
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
