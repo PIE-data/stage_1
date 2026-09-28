@@ -251,6 +251,26 @@ def test_scan_new_lists_downloaded_but_not_indexed(tmp_path, mirror, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_scan_new_since_reads_only_recent_time_folders(tmp_path, mirror, capsys):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    old, new = FEW[:2], FEW[2]
+    (ws / "old.txt").write_text("".join(f"{i}\n" for i in old))
+    assert run(ws, "--now", "2020-01-01T00:00:00Z", "download", "--manifest",
+               str(ws / "old.txt"), "--source-base", mirror, layout="time") == 0
+    assert run(ws, "--now", "2026-01-01T05:10:00Z", "download", "--book-id", str(new),
+               "--source-base", mirror, layout="time") == 0
+    capsys.readouterr()
+    assert run(ws, "scan-new", "--since", "2026-01-01T05:00:00Z", layout="time") == 0
+    assert capsys.readouterr().out == f"{new}\n"
+    assert run(ws, "scan-new", layout="time") == 0  # no --since: everything not indexed
+    assert capsys.readouterr().out == "".join(f"{i}\n" for i in sorted(FEW))
+
+
+def test_scan_new_rejects_a_bad_since(tmp_path):
+    assert run(tmp_path, "scan-new", "--since", "yesterday") == 2
+
+
 # ------------------------------------------------------------------- index
 
 

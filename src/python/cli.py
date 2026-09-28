@@ -67,7 +67,7 @@ SPEC_VERSION_FILE = REPO / "spec" / "SPEC_VERSION"
 # The specification this code implements.  SPEC.md line 10: an implementation
 # refuses to run when this differs from spec/SPEC_VERSION, so a spec change
 # that nobody ported fails loudly instead of producing subtly different output.
-SUPPORTED_SPEC_VERSION = "1.1.3"
+SUPPORTED_SPEC_VERSION = "1.1.4"
 STOPWORDS_FILE = REPO / "spec" / "stopwords_en.txt"
 
 LAYOUTS = ("time", "book", "hash")
@@ -292,7 +292,8 @@ def build_parser() -> argparse.ArgumentParser:
     lk = sub.add_parser("lookup")
     lk.add_argument("--book-id", type=int, required=True)
 
-    sub.add_parser("scan-new")
+    sn = sub.add_parser("scan-new")
+    sn.add_argument("--since", default=None, help="ISO8601: only books ingested from then on")
 
     sp = sub.add_parser("split")
     sp.add_argument("--book-id", type=int, required=True)

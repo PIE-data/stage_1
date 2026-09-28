@@ -31,6 +31,9 @@ Protocol, applied to every language alike
   * wall time from time.perf_counter_ns() around the child process, peak RSS
     from /usr/bin/time on the child -- never self-reported (SPEC.md §8);
   * all downloads hit tools/mirror_server.py, never the live network.
+
+E3 is the brief's "incremental processing": the cost of DETECTING which books
+are new and ready to be indexed (`scan-new --since`), not of downloading them.
 """
 
 from __future__ import annotations
@@ -123,8 +126,8 @@ def cli(engine: list[str], ws: Path, layout: str, backend: str, *args: str) -> l
             "--index-backend", backend, "--now", NOW, *args]
 
 
-def run_measured(cmd: list[str], env: dict) -> tuple[int, float, int | None, str]:
-    """Run once: (exit code, wall ms, peak RSS bytes or None, stderr)."""
+def run_measured(cmd: list[str], env: dict) -> tuple[int, float, int | None, str, str]:
+    """Run once: (exit code, wall ms, peak RSS bytes or None, stderr, stdout)."""
     timer = ["/usr/bin/time", "-f", "PEAK_RSS_KB:%M"] if Path("/usr/bin/time").exists() else []
     t0 = time.perf_counter_ns()
     proc = subprocess.run(timer + cmd, env=env, capture_output=True, text=True)
@@ -136,7 +139,7 @@ def run_measured(cmd: list[str], env: dict) -> tuple[int, float, int | None, str
             rss = int(line.split(":", 1)[1]) * 1024
         else:
             kept.append(line)
-    return proc.returncode, wall_ms, rss, "\n".join(kept)
+    return proc.returncode, wall_ms, rss, "\n".join(kept), proc.stdout
 
 
 def run_setup(cmd: list[str], env: dict) -> None:
@@ -200,6 +203,9 @@ class Runner:
             return "unknown"
 
     def preflight(self) -> None:
+        if not sys.platform.startswith("linux"):
+            sys.exit("[RUNNER] benchmarks run on Linux only (WSL2 on ext4, see #62): this is "
+                     f"{sys.platform}. Open Ubuntu and run from ~/bench/stage_1.")
         if str(self.work).startswith("/mnt/"):
             sys.exit(f"[RUNNER] {self.work} is on the Windows drive (NTFS): FolderIndex "
                      "merges terms that differ only in case there. Use a path under ~.")
@@ -299,7 +305,8 @@ class Runner:
         return rec
 
     def measure(self, *, experiment, lang, layout, backend, tier, setup, argv,
-                ws, workers=None, positions=None, post=None, ok=(0,)) -> None:
+                ws, workers=None, positions=None, post=None, ok=(0,),
+                expect_lines=None) -> None:
         label = f"{experiment} {lang} {layout or '-'} {backend or '-'} n={tier}" + \
                 (f" w={workers}" if workers else "")
         for r in range(self.args.warmup + self.args.reps):
@@ -307,9 +314,11 @@ class Runner:
             measured = r >= self.args.warmup
             if measured:
                 drop_system_caches(self.state)
-            code, wall, rss, err = run_measured(argv, self.env)
+            code, wall, rss, err, out = run_measured(argv, self.env)
             if code not in ok:
                 raise RunFailed(f"{label}: exit {code}\n{err[-2000:]}")
+            if expect_lines is not None and len(out.split()) != expect_lines:
+                raise RunFailed(f"{label}: expected {expect_lines} ids, got {len(out.split())}")
             if not measured:
                 print(f"[RUNNER] {label}  warm-up {wall:9.1f} ms", file=sys.stderr)
                 continue
@@ -340,19 +349,47 @@ class Runner:
                                      "--manifest", str(m), "--workers", str(w),
                                      "--source-base", self.base))
 
+    def e3_snapshot(self, layout: str, tier: int) -> tuple[Path, str]:
+        """The tier downloaded earlier, then 50 more "today": the state in which
+        the pipeline has to find what is new.  Returns (workspace, since)."""
+        snap = self.snapshots / f"incremental-{layout}-{tier}"
+        stamp = snap / ".since"
+        if not stamp.exists():
+            copy_snapshot(self.datalake_snapshot(layout, tier), snap)  # keeps mtimes
+            # the tier is marked indexed: only the 50 new books are "ready"
+            done = (snap / "control" / "downloaded_books.txt").read_text()
+            (snap / "control" / "indexed_books.txt").write_text(done)
+            time.sleep(1.1)  # mtime resolution: the new books must be strictly newer
+            since = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            m = self.manifest(f"extra-{tier}", self.extra_ids(tier))
+            # no --now: the new books land in today's date/hour folder, the tier
+            # stays in the fixed past one -- exactly the incremental situation
+            run_setup([*self.py(), "--workspace", str(snap), "--datalake-layout", layout,
+                       "download", "--manifest", str(m), "--source-base", self.base],
+                      self.env)
+            stamp.write_text(since)
+        return snap, stamp.read_text().strip()
+
     def e3(self, tiers) -> None:
-        """Incremental processing: a complete tier + 50 new books."""
+        """Incremental processing, as the brief defines it: the cost of
+        DETECTING which books are new and ready to be indexed.  `scan-new
+        --since` on a tier ingested earlier plus 50 books ingested now."""
         for tier in tiers:
-            m = self.manifest(f"tier+extra-{tier}", self.tier_ids(tier) + self.extra_ids(tier))
+            n_new = len(self.extra_ids(tier))
             for layout in self.args.layouts:
-                snap = self.datalake_snapshot(layout, tier)
+                snap, since = self.e3_snapshot(layout, tier)
                 for lang in self.args.languages:
                     ws = self.work / "ws"
+
+                    def check(ws=ws):  # the answer must be the 50 new books, no more
+                        return {"books_new": n_new}
+
                     self.measure(
                         experiment="E3", lang=lang, layout=layout, backend=None, tier=tier,
-                        workers=1, ws=ws, setup=lambda s=snap: copy_snapshot(s, ws),
-                        argv=cli(self.engines(lang), ws, layout, "json", "download",
-                                 "--manifest", str(m), "--source-base", self.base))
+                        ws=ws, setup=lambda s=snap: copy_snapshot(s, ws), post=check,
+                        expect_lines=n_new,
+                        argv=cli(self.engines(lang), ws, layout, "json", "scan-new",
+                                 "--since", since))
 
     def e5(self, tiers) -> None:
         """Storage overhead of each layout (language-independent)."""
