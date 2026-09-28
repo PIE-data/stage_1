@@ -295,10 +295,20 @@ def cmd_lookup(args, aux: dict) -> int:
 
 
 def cmd_scan_new(args, aux: dict) -> int:
+    """Books ready to be indexed.  With --since, only those ingested at or
+    after that instant -- the incremental case the brief asks to measure:
+    the time layout then reads only the date/hour folders from `since` on,
+    book and hash must walk the whole tree and compare mtimes (SPEC.md §4.1).
+    That asymmetry is what experiment E3 shows."""
     workspace = Path(args.workspace)
+    try:
+        since = parse_now(args.since) if args.since else EPOCH
+    except ValueError:
+        print(f"--since is not ISO8601: {args.since!r}", file=sys.stderr)
+        return EXIT_USAGE
     storage = make_storage(args.datalake_layout, workspace)
     tracker = StateTracker(workspace)
-    present = set(storage.list_new(EPOCH))
+    present = set(storage.list_new(since))
     new = sorted(i for i in present if not tracker.is_indexed(i))
     aux.update(docs_in_datalake=len(present), docs_new=len(new))
     sys.stdout.write("".join(f"{i}\n" for i in new))

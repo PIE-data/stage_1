@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.3
+SPEC_VERSION = 1.1.4
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -38,7 +38,7 @@ COMMANDS
   index      --book-id <id> | --all  [--positions] [--batch-size N]
   query      --terms "<t1> <t2> ..." --mode and|or  [--limit N]
   lookup     --book-id <id>                       resolve + read body via datalake layout
-  scan-new                                        list ids present in datalake, absent from indexed
+  scan-new   [--since <ISO8601>]                  list ids present in datalake, absent from indexed
   control-step --iterations N [--total-books 70000] [--manifest <path>] [--source-base <url>]
   reconcile                                       repair control files from datalake contents
   export-canonical --out <path>                   emit the canonical index (see §7)
@@ -91,7 +91,10 @@ line on `stdout`: `<header_path>\t<body_path>\n`, both relative to the workspace
 Not found: nothing on `stdout`, exit `3`. E2 therefore measures resolving *and* reading.
 
 **`scan-new`** prints the ids present in the datalake and absent from `indexed_books.txt`, one per line,
-ascending.
+ascending. With `--since <ISO8601>` it considers only books ingested at or after that instant, using the
+layout's own `list_new(since)` (§4.1): the `time` layout reads only the date/hour directories from `since`
+on, `book` and `hash` walk the whole tree and compare the body's modification time. This is the
+"cost of detecting which books are new" the brief asks to measure (experiment E3).
 
 **`control-step --iterations N`** moves **one book one stage forward** per iteration: if any book is
 downloaded and not indexed, the smallest such id is indexed; otherwise the next candidate is downloaded
@@ -389,7 +392,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.3",
+  "spec_version":  "1.1.4",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
