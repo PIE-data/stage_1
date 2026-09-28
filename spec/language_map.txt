@@ -1,0 +1,27 @@
+# Map lowercase language names to ISO 639-1 codes.
+# Format: language_name=code
+# Unmapped values are preserved in lowercase.
+
+english=en
+italian=it
+french=fr
+german=de
+spanish=es
+portuguese=pt
+dutch=nl
+danish=da
+swedish=sv
+norwegian=no
+finnish=fi
+icelandic=is
+polish=pl
+czech=cs
+hungarian=hu
+romanian=ro
+russian=ru
+greek=el
+latin=la
+chinese=zh
+japanese=ja
+arabic=ar
+hebrew=he
