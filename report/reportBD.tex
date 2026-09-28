@@ -1,0 +1,44 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+
+\title{Big Data: Search Engine Project \\ Stage 1: Building the Data Layer}
+\author{
+	Group: PIE data \\
+	Repository: \url{https://github.com/PIE-data/stage_1} \\
+	\\
+	Marcela Nieto-Kuczyńska \\
+	Andrea Patruno \\
+	Ivan Colella \\
+	Manuel Muñoz Roca
+}
+\date{Academic Year 2026/2027}
+
+\begin{document}
+	
+	\maketitle
+	
+	\section{Introduction and Objectives}
+	The overall goal of the Big Data course project is to design and implement a simple search engine from scratch. This report focuses on Stage 1, whose objective is to design and implement the data layer, establishing the backbone of the entire search engine. The data layer is responsible for ingesting raw data from Project Gutenberg, processing it into efficient structures, and tracking the state of the pipeline to prevent data loss or duplication. Our objective is to evaluate different storage architectures and inverted index structures across three programming languages (Python, Node.js, and Go) to ensure a scalable and efficient foundation for future crawling and querying modules.
+	
+	\section{System Architecture}
+	Our pipeline is organized into three main components:
+	\begin{itemize}
+		\item \textbf{Datalake:} A scalable repository storing raw and cleaned text files. The pipeline downloads books from a local mirror of Project Gutenberg, splits them into header and body using specific markers, and stores them. We implemented three layouts: Time-based, Book-based, and Batch-based.
+		\item \textbf{Datamarts:} This layer contains structured, queryable data. It consists of a Metadata store (implemented in SQLite to track book metadata like Title and Author) and the Inverted Index, which maps terms to the documents and positions where they appear.
+		\item \textbf{Control Layer:} Acts as the brain of the ingestion pipeline. It uses \texttt{downloaded\_books.txt} and \texttt{indexed\_books.txt} to track progress, ensuring no duplicate downloads, crash recovery, and idempotency.
+	\end{itemize}
+	
+	\section{Design Decisions}
+	To meet the project requirements within the available time and resources, our group made several key scope decisions:
+	\begin{itemize}
+		\item \textbf{Languages (Python, Node, Go):} We chose Node.js and Go alongside the Python reference implementation. Neither requires complex build steps, which saved us significant setup time while still providing a good contrast between interpreted, event-loop JIT, and compiled languages.
+		\item \textbf{Index Backends (JSON, Folder, SQLite):} We opted for custom approaches instead of MongoDB. This avoided the need to manage an external service and provided a cleaner performance comparison axis: one monolithic file (JSON) vs. many small files (Folder) vs. an embedded B-tree (SQLite).
+		\item \textbf{Corpus (English-only, 100/500/2000 tiers):} We restricted the dataset to English to use a single stop-word list. The 2000-book tier is approximately 1 GB, fitting within a reasonable overnight benchmark run.
+		\item \textbf{No Stemming:} Implementations of stemming algorithms are not byte-identical across Python, Node, and Go. Using them would break our strict canonical export hashes required for the conformance test.
+		\item \textbf{Word-level Index:} We stored both term frequencies and token positions, as positions are required for phrase queries and ranking in Stage 2.
+		\item \textbf{Local Mirror for Benchmarks:} All benchmark runs use a local HTTP mirror. Hitting the live Project Gutenberg would only measure their rate limiter, not our code's performance.
+		\item \textbf{Metadata storage comparison dropped:} As this was explicitly marked as optional in the brief, we dropped it to focus on the core inverted index structures.
+	\end{itemize}
+	
+\end{document}
