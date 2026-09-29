@@ -109,7 +109,7 @@ jobs:
       - name: tests
         run: python -m pytest src/python -v
 
-    node:
+  node:
     name: node unit tests
     needs: detect
     if: needs.detect.outputs.node == 'true'
