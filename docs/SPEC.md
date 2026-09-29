@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.4
+SPEC_VERSION = 1.1.5
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -276,6 +276,7 @@ The header is a sequence of `Field: value` lines, possibly with continuation lin
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
+PRAGMA cache_size   = -262144;          -- 256 MiB page cache (default 2 MiB thrashes on bulk inserts)
 
 CREATE TABLE IF NOT EXISTS books (
     book_id      INTEGER PRIMARY KEY,
@@ -338,6 +339,7 @@ axis than file-vs-file-vs-network.
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
+PRAGMA cache_size   = -262144;          -- 256 MiB page cache (default 2 MiB thrashes on bulk inserts)
 
 CREATE TABLE IF NOT EXISTS terms (
     term  TEXT    PRIMARY KEY,
@@ -354,6 +356,11 @@ CREATE INDEX IF NOT EXISTS idx_postings_book ON postings(book_id);
 ```
 
 - Inserts use `INSERT OR REPLACE` inside one transaction per `--batch-size` books (idempotency, invariant I4).
+  Each book's rows are inserted in primary-key order (term ascending).
+- `terms.df` is refreshed **once per transaction**, just before it commits, for every term touched since the
+  previous commit: `INSERT OR REPLACE INTO terms SELECT term, COUNT(*) FROM postings WHERE term IN (touched)
+  GROUP BY term`. Refreshing it per book re-counts common terms once for every book added — quadratic in the
+  corpus size. The set of touched terms is kept in a `TEMP` table, never in `index.db`.
 - Single-term query: `SELECT book_id, tf FROM postings WHERE term = ? ORDER BY book_id`.
 - AND-k query: `SELECT book_id FROM postings WHERE term IN (…) GROUP BY book_id HAVING COUNT(*) = k`.
 - `WITHOUT ROWID` is deliberate — it stores the row in the index B-tree itself, halving lookups for this
@@ -392,7 +399,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.4",
+  "spec_version":  "1.1.5",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
