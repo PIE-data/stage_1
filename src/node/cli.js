@@ -64,6 +64,9 @@ function parseCommand() {
         "index-backend": { type: "string" },
         positions: { type: "boolean" },
         out: { type: "string" },
+        terms: { type: "string" },
+        mode: { type: "string" },
+        limit: { type: "string" },
       },
       allowPositionals: true,
       strict: true,
@@ -78,7 +81,7 @@ function parseCommand() {
   if (
     !values.workspace ||
     positionals.length !== 1 ||
-    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile", "index", "export-canonical"].includes(command)
+    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile", "index", "export-canonical", "query"].includes(command)
   ) {
     throw new ArgumentError("A workspace and a supported command are required");
   }
@@ -116,6 +119,12 @@ const allowed = new Set([
 
   if (command === "export-canonical") {
     allowed.add("out");
+  }
+
+    if (command === "query") {
+    allowed.add("terms");
+    allowed.add("mode");
+    allowed.add("limit");
   }
 
   for (const name of Object.keys(values)) {
@@ -213,6 +222,30 @@ if (
     throw new ArgumentError("MongoDB indexing is not implemented");
   }
 
+    if (command === "query") {
+    if (values.terms === undefined) {
+      throw new ArgumentError("query requires --terms");
+    }
+
+    if (!["and", "or"].includes(values.mode)) {
+      throw new ArgumentError("--mode must be and or or");
+    }
+
+    if (
+      values.limit !== undefined &&
+      (
+        !/^(0|[1-9][0-9]*)$/u.test(values.limit) ||
+        !Number.isSafeInteger(Number(values.limit))
+      )
+    ) {
+      throw new ArgumentError("--limit must be a non-negative safe integer");
+    }
+
+    if ((values["index-backend"] ?? "json") === "mongo") {
+      throw new ArgumentError("MongoDB queries are not implemented");
+    }
+  }
+
   return { command, values, layout, now, bookId, workers };
 }
 
@@ -231,6 +264,26 @@ function readManifest(path) {
 
 async function prepareOperation(context) {
   const { command, values, layout, now, bookId, workers } = context;
+
+    if (command === "query") {
+    const { queryIndex } = await import("./query.js");
+
+    return async () => {
+      const ids = await queryIndex({
+        workspace: values.workspace,
+        backend: values["index-backend"] ?? "json",
+        terms: values.terms,
+        mode: values.mode,
+        limit: values.limit === undefined ? undefined : Number(values.limit),
+      });
+
+      if (ids.length > 0) {
+        process.stdout.write(`${ids.join("\n")}\n`);
+      }
+
+      return 0;
+    };
+  }
 
     if (command === "index") {
     const { indexBooks } = await import("./index_pipeline.js");
@@ -406,7 +459,7 @@ async function main() {
 
         if (command === "index") {
       record.positions = values.positions === true;
-    } else if (command === "export-canonical") {
+    } else if (command === "export-canonical" || command === "query") {
       const { readIndexConfig } = await import("./index_pipeline.js");
       const config = readIndexConfig(
         values.workspace,
@@ -431,7 +484,7 @@ async function main() {
         "Usage: node src/node/cli.js --workspace <path> " +
         "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
         "[--metrics-out <path>] " +
-        "<version|download|split|metadata|lookup|scan-new|reconcile|index|export-canonical> [command options]",
+        "<version|download|split|metadata|lookup|scan-new|reconcile|index|export-canonical|Usage> [command options]",
       );
       return 2;
     }
