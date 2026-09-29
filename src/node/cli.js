@@ -56,6 +56,7 @@ function parseCommand() {
         manifest: { type: "string" },
         workers: { type: "string" },
         "source-base": { type: "string" },
+        since: { type: "string" },
       },
       allowPositionals: true,
       strict: true,
@@ -70,14 +71,20 @@ function parseCommand() {
   if (
     !values.workspace ||
     positionals.length !== 1 ||
-    !["version", "download", "split"].includes(command)
+    !["version", "download", "split", "lookup", "scan-new"].includes(command)
   ) {
     throw new ArgumentError("A workspace and a supported command are required");
   }
 
   const allowed = new Set(["workspace", "datalake-layout", "now"]);
 
-  if (command === "split") allowed.add("book-id");
+  if (command === "split" || command === "lookup") {
+  allowed.add("book-id");
+  }
+
+  if (command === "scan-new") {
+  allowed.add("since");
+  }
 
   if (command === "download") {
     for (const name of ["book-id", "manifest", "workers", "source-base"]) {
@@ -101,8 +108,16 @@ function parseCommand() {
   let bookId;
   let workers = 1;
 
-  if (command === "split") {
-    bookId = positiveInteger(values["book-id"], "--book-id");
+  if (command === "split" || command === "lookup") {
+  bookId = positiveInteger(values["book-id"], "--book-id");
+  }
+
+  if (command === "scan-new" && values.since !== undefined) {
+    try {
+      parseInstant(values.since);
+    } catch (error) {
+      throw new ArgumentError(error.message.replaceAll("--now", "--since"));
+    }
   }
 
   if (command === "download") {
@@ -163,6 +178,37 @@ async function main() {
       return 0;
     }
 
+    if (command === "lookup" || command === "scan-new") {
+      const { lookupBook, scanNewBooks } = await import("./datalake_queries.js");
+
+      if (command === "lookup") {
+         const paths = lookupBook({
+           workspace: values.workspace,
+           layout,
+           bookId,
+         });
+
+         if (!paths) return 3;
+
+         process.stdout.write(`${paths[0]}\t${paths[1]}\n`);
+         return 0;
+    }
+
+    const ids = scanNewBooks({
+       workspace: values.workspace,
+       layout,
+       since: values.since === undefined
+         ? undefined
+         : parseInstant(values.since),
+    });
+
+    if (ids.length > 0) {
+       process.stdout.write(`${ids.join("\n")}\n`);
+    }
+
+    return 0;
+   }
+
     // Load native ingestion dependencies only for ingestion commands.
     const { downloadBooks, splitCachedBook } = await import("./ingestion.js");
 
@@ -193,7 +239,7 @@ async function main() {
       console.error(
         "Usage: node src/node/cli.js --workspace <path> " +
         "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
-        "<version|download|split> [command options]",
+        "<version|download|split|lookup|scan-new> [command options]",
       );
       return 2;
     }

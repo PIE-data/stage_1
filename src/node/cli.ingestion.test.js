@@ -334,3 +334,156 @@ test("CLI download processes a local HTTP manifest and skips completed books", a
     });
   }
 });
+
+function prepareBook(workspace, layout, bookId) {
+  mkdirSync(join(workspace, "raw"), { recursive: true });
+
+  writeFileSync(
+    join(workspace, "raw", `${bookId}.txt`),
+    [
+      "Title: Example",
+      "*** START OF THE PROJECT GUTENBERG EBOOK SAMPLE ***",
+      "Example body",
+      "*** END OF THE PROJECT GUTENBERG EBOOK SAMPLE ***",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const result = run(
+    workspace,
+    "--datalake-layout", layout,
+    "--now", STAMP,
+    "split", "--book-id", String(bookId),
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+}
+
+for (const layout of ["book", "hash", "time"]) {
+  test(`CLI lookup resolves ${layout} without a metadata database`, (t) => {
+    const workspace = fixture(t);
+    prepareBook(workspace, layout, 42);
+
+    const expected = {
+      book: [
+        "datalake/books/42/header.txt",
+        "datalake/books/42/body.txt",
+      ],
+      hash: [
+        "datalake/00/00/42.header.txt",
+        "datalake/00/00/42.body.txt",
+      ],
+      time: [
+        "datalake/20260917/14/42.header.txt",
+        "datalake/20260917/14/42.body.txt",
+      ],
+    }[layout];
+
+    const result = run(
+      workspace,
+      "--datalake-layout", layout,
+      "lookup", "--book-id", "42",
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${expected.join("\t")}\n`);
+    assert.equal(existsSync(join(workspace, "datamarts")), false);
+
+    rmSync(join(workspace, expected[1]));
+
+    const missing = run(
+      workspace,
+      "--datalake-layout", layout,
+      "lookup", "--book-id", "42",
+    );
+
+    assert.equal(missing.status, 3, missing.stderr);
+    assert.equal(missing.stdout, "");
+  });
+
+  test(`CLI scan-new sorts ${layout} IDs and excludes indexed books`, (t) => {
+    const workspace = fixture(t);
+
+    for (const bookId of [42, 7, 15]) {
+      prepareBook(workspace, layout, bookId);
+    }
+
+    writeFileSync(
+      join(workspace, "control", "indexed_books.txt"),
+      "15\n",
+      "utf8",
+    );
+
+    const result = run(
+      workspace,
+      "--datalake-layout", layout,
+      "scan-new",
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "7\n42\n");
+    assert.equal(existsSync(join(workspace, "datamarts")), false);
+  });
+}
+
+test("CLI scan-new applies the time layout hour boundary", (t) => {
+  const workspace = fixture(t);
+  prepareBook(workspace, "time", 42);
+
+  const included = run(
+    workspace,
+    "--datalake-layout", "time",
+    "scan-new", "--since", "2026-09-17T14:59:00Z",
+  );
+
+  assert.equal(included.status, 0, included.stderr);
+  assert.equal(included.stdout, "42\n");
+
+  const excluded = run(
+    workspace,
+    "--datalake-layout", "time",
+    "scan-new", "--since", "2026-09-17T15:00:00Z",
+  );
+
+  assert.equal(excluded.status, 0, excluded.stderr);
+  assert.equal(excluded.stdout, "");
+});
+
+test("read-only commands work while the workspace writer lock is held", async (t) => {
+  const workspace = fixture(t);
+  prepareBook(workspace, "hash", 42);
+
+  const lock = await acquireRunLock(workspace);
+
+  try {
+    const lookup = run(
+      workspace,
+      "--datalake-layout", "hash",
+      "lookup", "--book-id", "42",
+    );
+
+    assert.equal(lookup.status, 0, lookup.stderr);
+
+    const scan = run(
+      workspace,
+      "--datalake-layout", "hash",
+      "scan-new",
+    );
+
+    assert.equal(scan.status, 0, scan.stderr);
+    assert.equal(scan.stdout, "42\n");
+  } finally {
+    await lock.release();
+  }
+});
+
+test("CLI scan-new rejects an invalid timestamp", (t) => {
+  const workspace = fixture(t);
+  const result = run(
+    workspace,
+    "scan-new", "--since", "not-a-date",
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /--since/);
+});
