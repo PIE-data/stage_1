@@ -67,6 +67,8 @@ function parseCommand() {
         terms: { type: "string" },
         mode: { type: "string" },
         limit: { type: "string" },
+        iterations: { type: "string" },
+        "total-books": { type: "string" },
       },
       allowPositionals: true,
       strict: true,
@@ -81,7 +83,7 @@ function parseCommand() {
   if (
     !values.workspace ||
     positionals.length !== 1 ||
-    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile", "index", "export-canonical", "query"].includes(command)
+    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile", "index", "export-canonical", "query", "control-step"].includes(command)
   ) {
     throw new ArgumentError("A workspace and a supported command are required");
   }
@@ -125,6 +127,14 @@ const allowed = new Set([
     allowed.add("terms");
     allowed.add("mode");
     allowed.add("limit");
+  }
+
+      if (command === "control-step") {
+    for (const name of [
+      "iterations", "total-books", "manifest", "source-base",
+    ]) {
+      allowed.add(name);
+    }
   }
 
   for (const name of Object.keys(values)) {
@@ -246,6 +256,35 @@ if (
     }
   }
 
+      if (command === "control-step") {
+    positiveInteger(values.iterations, "--iterations");
+    positiveInteger(values["total-books"] ?? "70000", "--total-books");
+
+    if (values.manifest !== undefined && !values.manifest.trim()) {
+      throw new ArgumentError("--manifest requires a non-empty path");
+    }
+
+    if ((values["index-backend"] ?? "json") === "mongo") {
+      throw new ArgumentError("MongoDB control-step is not implemented");
+    }
+
+    if (values["source-base"] !== undefined) {
+      let url;
+
+      try {
+        url = new URL(values["source-base"]);
+      } catch {
+        throw new ArgumentError("--source-base must be an HTTP(S) URL");
+      }
+
+      if (!["http:", "https:"].includes(url.protocol) || url.search || url.hash) {
+        throw new ArgumentError(
+          "--source-base must be HTTP(S), without query or fragment",
+        );
+      }
+    }
+  }
+
   return { command, values, layout, now, bookId, workers };
 }
 
@@ -264,6 +303,34 @@ function readManifest(path) {
 
 async function prepareOperation(context) {
   const { command, values, layout, now, bookId, workers } = context;
+
+    if (command === "control-step") {
+    const { controlStep } = await import("./control/control_step.js");
+    const bookIds = values.manifest === undefined
+      ? undefined
+      : readManifest(values.manifest);
+
+    return async () => {
+      const result = await controlStep({
+        workspace: values.workspace,
+        layout,
+        backend: values["index-backend"] ?? "json",
+        iterations: Number(values.iterations),
+        totalBooks: Number(values["total-books"] ?? "70000"),
+        bookIds,
+        sourceBase: values["source-base"],
+        now,
+      });
+
+      console.error(
+        `control-step: iterations ${result.iterations}, ` +
+        `downloaded ${result.downloaded}, indexed ${result.indexed}, ` +
+        `failed ${result.failed}`,
+      );
+
+      return result.exitCode;
+    };
+  }
 
     if (command === "query") {
     const { queryIndex } = await import("./query.js");
@@ -459,6 +526,14 @@ async function main() {
 
         if (command === "index") {
       record.positions = values.positions === true;
+        } else if (command === "control-step") {
+      const { readIndexConfig } = await import("./index_pipeline.js");
+      const config = readIndexConfig(
+        values.workspace,
+        values["index-backend"] ?? "json",
+      );
+      record.positions = config?.positions ?? true;
+      record.batch_size = 1;
     } else if (command === "export-canonical" || command === "query") {
       const { readIndexConfig } = await import("./index_pipeline.js");
       const config = readIndexConfig(
