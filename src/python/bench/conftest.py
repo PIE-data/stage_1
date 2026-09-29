@@ -123,7 +123,8 @@ def indexes(corpus, datalake):
     return built
 
 
-def record(benchmark, *, experiment: str, layout=None, backend=None, workload=None) -> dict:
+def record(benchmark, *, experiment: str, layout=None, backend=None, workload=None,
+           corpus_size: int | None = None) -> dict:
     """Write one SPEC §8 record from the benchmark's raw timings."""
     data = sorted(t * 1e6 for t in benchmark.stats.stats.data)  # seconds -> us
     q1, _, q3 = statistics.quantiles(data, n=4, method="inclusive")
@@ -133,7 +134,7 @@ def record(benchmark, *, experiment: str, layout=None, backend=None, workload=No
         "spec_version": SPEC_VERSION, "language": "python",
         "impl_version": os.environ.get("BENCH_IMPL_VERSION", "unknown"),
         "experiment": experiment, "datalake_layout": layout, "index_backend": backend,
-        "positions": True if backend else None, "corpus_size": TIER, "workers": None,
+        "positions": True if backend else None, "corpus_size": corpus_size or TIER, "workers": None,
         "batch_size": None, "repetition": None,
         "metric": "latency", "value": round(statistics.median(data), 3), "unit": "us",
         "aux": {"layer": "micro", "tool": "pytest-benchmark", "workload": workload,
