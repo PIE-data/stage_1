@@ -76,7 +76,7 @@ function parseCommand() {
   if (
     !values.workspace ||
     positionals.length !== 1 ||
-    !["version", "download", "split", "lookup", "scan-new", "metadata"].includes(command)
+    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile"].includes(command)
   ) {
     throw new ArgumentError("A workspace and a supported command are required");
   }
@@ -211,6 +211,25 @@ function readManifest(path) {
 async function prepareOperation(context) {
   const { command, values, layout, now, bookId, workers } = context;
 
+    if (command === "reconcile") {
+    const { reconcileWorkspace } = await import("./control/reconcile.js");
+
+    return async () => {
+      const result = await reconcileWorkspace({
+        workspace: values.workspace,
+        layout,
+      });
+
+      console.error(
+        `reconcile: downloaded ${result.downloaded}, ` +
+        `indexed ${result.indexed}, ` +
+        `partials removed ${result.partialsRemoved}`,
+      );
+
+      return 0;
+    };
+  }
+
   if (command === "metadata") {
     const { generateMetadata } = await import("./metadata_pipeline.js");
     const batchSize = positiveInteger(
@@ -344,7 +363,7 @@ async function main() {
         "Usage: node src/node/cli.js --workspace <path> " +
         "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
         "[--metrics-out <path>] " +
-        "<version|download|split|metadata|lookup|scan-new> [command options]",
+        "<version|download|split|metadata|lookup|scan-new|reconcile> [command options]",
       );
       return 2;
     }
