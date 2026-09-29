@@ -11,6 +11,7 @@ import {
   createDownloader,
   DownloadError,
 } from "./datalake/downloader.js";
+import { writeIngestionReceipt } from "./control/ingestion_receipts.js";
 
 export function makeStorage(workspace, layout, now) {
   switch (layout) {
@@ -41,6 +42,7 @@ export function ingestText({
   bookId,
   text,
   storage,
+  layout,
   now,
 }) {
   validateInputs(bookId, now);
@@ -57,7 +59,16 @@ export function ingestText({
   }
 
   // Storage completes every artifact before the control-file append.
-  storage.write(bookId, parts.header, parts.body);
+  const paths = storage.write(bookId, parts.header, parts.body);
+
+  writeIngestionReceipt({
+   workspace,
+   layout,
+   bookId,
+   paths,
+   ingestedAt: now,
+  });
+
   control.markDownloaded(bookId);
 
   return 0;
@@ -92,6 +103,7 @@ export async function splitCachedBook({
       bookId,
       text,
       storage,
+      layout,
       now: instant,
     });
   });
@@ -189,6 +201,7 @@ export async function downloadBooks({
           bookId,
           text: result.text,
           storage,
+          layout,
           now: instant,
         });
 

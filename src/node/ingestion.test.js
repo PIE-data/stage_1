@@ -396,3 +396,140 @@ test("a locked workspace starts no download requests", async (t) => {
     await lock.release();
   }
 });
+
+test("ingestion persists layout receipts and re-split updates the instant", async (t) => {
+  for (const layout of ["book", "hash", "time"]) {
+    const workspace = fixture(t);
+    cache(workspace, RAW);
+
+    const firstInstant = new Date(STAMP);
+
+    assert.equal(await splitCachedBook({
+      workspace,
+      bookId: 42,
+      layout,
+      now: firstInstant,
+    }), 0);
+
+    const receiptPath = join(
+      workspace, "control", "ingestion", layout, "42.json",
+    );
+
+    const first = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const paths = makeStorage(workspace, layout, firstInstant).lookup(42);
+
+    assert.deepEqual(first, {
+      book_id: 42,
+      header_path: paths[0],
+      body_path: paths[1],
+      ingested_at: STAMP,
+    });
+
+    // Stay in the same hour to avoid creating a second time-layout copy.
+    const secondStamp = "2026-09-17T14:30:00Z";
+
+    assert.equal(await splitCachedBook({
+      workspace,
+      bookId: 42,
+      layout,
+      now: new Date(secondStamp),
+    }), 0);
+
+    const second = JSON.parse(readFileSync(receiptPath, "utf8"));
+    assert.equal(second.ingested_at, secondStamp);
+
+    assert.equal(
+      readFileSync(
+        join(workspace, "control", "downloaded_books.txt"),
+        "utf8",
+      ),
+      "42\n",
+    );
+  }
+});
+
+test("time lookup selects the newest complete bucket after re-splitting", async (t) => {
+  const workspace = fixture(t);
+  cache(workspace, RAW);
+
+  assert.equal(await splitCachedBook({
+    workspace,
+    bookId: 42,
+    layout: "time",
+    now: new Date(STAMP),
+  }), 0);
+
+  cache(workspace, RAW.replace("\ncafé\n", "\nUpdated body\n"));
+
+  const laterStamp = "2026-09-18T09:15:00Z";
+
+  assert.equal(await splitCachedBook({
+    workspace,
+    bookId: 42,
+    layout: "time",
+    now: new Date(laterStamp),
+  }), 0);
+
+  const storage = makeStorage(workspace, "time");
+  const paths = storage.lookup(42);
+
+  assert.deepEqual(paths, [
+    "datalake/20260918/09/42.header.txt",
+    "datalake/20260918/09/42.body.txt",
+  ]);
+
+  assert.equal(
+    readFileSync(join(workspace, paths[1]), "utf8"),
+    "Updated body\n",
+  );
+
+  // Previous copies remain available on disk.
+  assert.equal(
+    readFileSync(
+      join(workspace, "datalake", "20260917", "14", "42.body.txt"),
+      "utf8",
+    ),
+    "café\n",
+  );
+
+  const { readIngestionReceipt } = await import(
+    "./control/ingestion_receipts.js"
+  );
+
+  const receipt = readIngestionReceipt({
+    workspace,
+    layout: "time",
+    bookId: 42,
+    paths,
+  });
+
+  assert.equal(receipt.ingested_at, laterStamp);
+
+  // A newer incomplete bucket must not hide a complete book.
+  const incomplete = join(workspace, "datalake", "20260919", "10");
+  mkdirSync(incomplete, { recursive: true });
+  writeFileSync(join(incomplete, "42.body.txt"), "Incomplete\n", "utf8");
+
+  assert.deepEqual(storage.lookup(42), paths);
+
+  // Removing the selected body must be observed without a cached result.
+  rmSync(join(workspace, paths[1]));
+
+  const fallback = storage.lookup(42);
+
+  assert.deepEqual(fallback, [
+    "datalake/20260917/14/42.header.txt",
+    "datalake/20260917/14/42.body.txt",
+  ]);
+
+  // The newer receipt must not be silently applied to the older copy.
+  assert.throws(
+    () => readIngestionReceipt({
+      workspace,
+      layout: "time",
+      bookId: 42,
+      paths: fallback,
+    }),
+    /Receipt paths/,
+  );
+});

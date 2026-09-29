@@ -113,10 +113,13 @@ export class TimeStorage {
     }
   }
 
-  lookup(bookId) {
+    lookup(bookId) {
     validateBookId(bookId);
 
-    // Walk date/hour directories on every call; no metadata or cached index.
+    let latest = null;
+
+    // Buckets are ordered chronologically. Keep the newest complete pair.
+    // Resolve from the filesystem on every call, without auxiliary metadata.
     for (const { date, hour } of this.buckets()) {
       const paths = this.paths(bookId, date, hour);
 
@@ -124,11 +127,11 @@ export class TimeStorage {
         isFile(join(this.workspace, paths[0])) &&
         isFile(join(this.workspace, paths[1]))
       ) {
-        return paths;
+        latest = paths;
       }
     }
 
-    return null;
+    return latest;
   }
 
   listNew(since) {
