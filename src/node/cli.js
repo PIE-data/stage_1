@@ -1,53 +1,206 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
-// Specification version supported by this implementation.
 const SUPPORTED_SPEC_VERSION = "1.1.5";
-
-// Resolve the path relative to this file, regardless of the terminal's working directory.
 const versionFile = new URL("../../spec/SPEC_VERSION", import.meta.url);
 
-function main() {
-  let values;
-  let positionals;
+class ArgumentError extends Error {}
+
+function positiveInteger(value, name) {
+  if (!/^[1-9][0-9]*$/u.test(value ?? "")) {
+    throw new ArgumentError(`${name} must be a positive integer`);
+  }
+
+  const result = Number(value);
+
+  if (!Number.isSafeInteger(result)) {
+    throw new ArgumentError(`${name} exceeds the safe integer range`);
+  }
+
+  return result;
+}
+
+function parseInstant(value) {
+  if (value === undefined) return new Date();
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/u.exec(value);
+  const date = new Date(value);
+
+  if (!match || !Number.isFinite(date.getTime())) {
+    throw new ArgumentError("--now requires an ISO8601 timestamp with timezone");
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  if (month < 1 || month > 12 || day < 1 || day > days[month - 1]) {
+    throw new ArgumentError("--now contains an invalid calendar date");
+  }
+
+  return date;
+}
+
+function parseCommand() {
+  let parsed;
 
   try {
-    ({ values, positionals } = parseArgs({
+    parsed = parseArgs({
       options: {
-        workspace: { type: "string" }
+        workspace: { type: "string" },
+        "datalake-layout": { type: "string" },
+        now: { type: "string" },
+        "book-id": { type: "string" },
+        manifest: { type: "string" },
+        workers: { type: "string" },
+        "source-base": { type: "string" },
       },
       allowPositionals: true,
-      strict: true
-    }));
+      strict: true,
+    });
   } catch (error) {
-    console.error(error.message);
-    return 2;
+    throw new ArgumentError(error.message);
   }
 
-  // The specification requires --workspace as a global option.
-  if (!values.workspace || positionals.length !== 1 || positionals[0] !== "version") {
-    console.error("Usage: node src/node/cli.js --workspace <path> version");
-    return 2;
+  const { values, positionals } = parsed;
+  const command = positionals[0];
+
+  if (
+    !values.workspace ||
+    positionals.length !== 1 ||
+    !["version", "download", "split"].includes(command)
+  ) {
+    throw new ArgumentError("A workspace and a supported command are required");
   }
 
-  try {
-    const version = readFileSync(versionFile, "utf8").trim();
+  const allowed = new Set(["workspace", "datalake-layout", "now"]);
 
-    // Prevent execution when the repository specification is incompatible.
-    if (version !== SUPPORTED_SPEC_VERSION) {
-      console.error(
-        `Spec mismatch: supported ${SUPPORTED_SPEC_VERSION}, found ${version}`
-      );
-      return 1;
+  if (command === "split") allowed.add("book-id");
+
+  if (command === "download") {
+    for (const name of ["book-id", "manifest", "workers", "source-base"]) {
+      allowed.add(name);
+    }
+  }
+
+  for (const name of Object.keys(values)) {
+    if (!allowed.has(name)) {
+      throw new ArgumentError(`--${name} is not valid for ${command}`);
+    }
+  }
+
+  const layout = values["datalake-layout"] ?? "time";
+
+  if (!["time", "book", "hash"].includes(layout)) {
+    throw new ArgumentError("--datalake-layout must be time, book or hash");
+  }
+
+  const now = parseInstant(values.now);
+  let bookId;
+  let workers = 1;
+
+  if (command === "split") {
+    bookId = positiveInteger(values["book-id"], "--book-id");
+  }
+
+  if (command === "download") {
+    const hasId = values["book-id"] !== undefined;
+    const hasManifest = values.manifest !== undefined;
+
+    if (hasId === hasManifest || (hasManifest && !values.manifest)) {
+      throw new ArgumentError("Choose exactly one of --book-id or --manifest");
     }
 
-    console.log(version);
-    console.error(`stage-1-node 0.1.0 | Node ${process.version}`);
-    return 0;
+    if (hasId) bookId = positiveInteger(values["book-id"], "--book-id");
+    workers = positiveInteger(values.workers ?? "1", "--workers");
+
+    if (values["source-base"] !== undefined) {
+      let url;
+
+      try {
+        url = new URL(values["source-base"]);
+      } catch {
+        throw new ArgumentError("--source-base must be an HTTP(S) URL");
+      }
+
+      if (!["http:", "https:"].includes(url.protocol) || url.search || url.hash) {
+        throw new ArgumentError("--source-base must be HTTP(S), without query or fragment");
+      }
+    }
+  }
+
+  return { command, values, layout, now, bookId, workers };
+}
+
+function readManifest(path) {
+  const ids = [];
+
+  for (const line of readFileSync(path, "utf8").split(/\r\n|\n|\r/u)) {
+    const value = line.trim();
+    if (value === "" || value.startsWith("#")) continue;
+    ids.push(positiveInteger(value, "Manifest book ID"));
+  }
+
+  return ids;
+}
+
+async function main() {
+  try {
+    const { command, values, layout, now, bookId, workers } = parseCommand();
+    const version = readFileSync(versionFile, "utf8").trim();
+
+    if (version !== SUPPORTED_SPEC_VERSION) {
+      throw new Error(
+        `Spec mismatch: supported ${SUPPORTED_SPEC_VERSION}, found ${version}`,
+      );
+    }
+
+    if (command === "version") {
+      console.log(version);
+      console.error(`stage-1-node 0.1.0 | Node ${process.version}`);
+      return 0;
+    }
+
+    // Load native ingestion dependencies only for ingestion commands.
+    const { downloadBooks, splitCachedBook } = await import("./ingestion.js");
+
+    const common = {
+      workspace: values.workspace,
+      layout,
+      now,
+    };
+
+    if (command === "split") {
+      return await splitCachedBook({ ...common, bookId });
+    }
+
+    const bookIds = bookId === undefined
+      ? readManifest(values.manifest)
+      : [bookId];
+
+    return await downloadBooks({
+      ...common,
+      bookIds,
+      workers,
+      sourceBase: values["source-base"],
+    });
   } catch (error) {
-    console.error(`Cannot read SPEC_VERSION: ${error.message}`);
+    console.error(error.message);
+
+    if (error instanceof ArgumentError) {
+      console.error(
+        "Usage: node src/node/cli.js --workspace <path> " +
+        "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
+        "<version|download|split> [command options]",
+      );
+      return 2;
+    }
+
+    if (error.name === "WorkspaceLockedError") return 4;
     return 1;
   }
 }
 
-process.exitCode = main();
+process.exitCode = await main();
