@@ -10,8 +10,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeStorage, splitCachedBook } from "./ingestion.js";
+import {
+  makeStorage,
+  splitCachedBook,
+  downloadBooks,
+} from "./ingestion.js";
 import { acquireRunLock } from "./control/run_lock.js";
+import { DownloadError } from "./datalake/downloader.js";
 
 const STAMP = "2026-09-17T14:03:11Z";
 
@@ -185,6 +190,208 @@ test("a locked workspace rejects splitting before writing artifacts", async (t) 
     );
 
     assert.equal(existsSync(join(workspace, "datalake")), false);
+  } finally {
+    await lock.release();
+  }
+});
+
+function fakeDownloader(outcomes) {
+  const calls = [];
+  let closed = false;
+
+  return {
+    calls,
+    get closed() {
+      return closed;
+    },
+    factory: () => ({
+      async download(bookId) {
+        calls.push(bookId);
+        const outcome = outcomes.get(bookId);
+
+        if (outcome instanceof Error) throw outcome;
+        if (typeof outcome !== "string") {
+          throw new Error(`Unexpected request for book ${bookId}`);
+        }
+
+        return outcome;
+      },
+      async close() {
+        closed = true;
+      },
+    }),
+  };
+}
+
+test("download caches raw text, ingests it and skips completed books", async (t) => {
+  const workspace = fixture(t);
+  const fake = fakeDownloader(new Map([[42, RAW]]));
+
+  const options = {
+    workspace,
+    bookIds: [42, 42],
+    layout: "hash",
+    now: new Date(STAMP),
+    downloaderFactory: fake.factory,
+  };
+
+  assert.equal(await downloadBooks(options), 0);
+  assert.deepEqual(fake.calls, [42]);
+  assert.equal(fake.closed, true);
+
+  assert.equal(
+    readFileSync(join(workspace, "raw", "42.txt"), "utf8"),
+    RAW,
+  );
+
+  const storage = makeStorage(workspace, "hash", options.now);
+  assert.ok(storage.lookup(42));
+
+  assert.equal(await downloadBooks(options), 0);
+  assert.deepEqual(fake.calls, [42]);
+
+  assert.equal(
+    readFileSync(
+      join(workspace, "control", "downloaded_books.txt"),
+      "utf8",
+    ),
+    "42\n",
+  );
+});
+
+test("download continues after failures and gives DOWNLOAD_ERROR precedence", async (t) => {
+  const workspace = fixture(t);
+  const fake = fakeDownloader(new Map([
+    [1, new DownloadError("Missing", "NOT_FOUND", 404)],
+    [2, "No markers here"],
+    [3, new DownloadError("Unavailable", "DOWNLOAD_ERROR", 503)],
+    [4, RAW],
+  ]));
+
+  assert.equal(await downloadBooks({
+    workspace,
+    bookIds: [1, 2, 3, 4],
+    layout: "hash",
+    now: new Date(STAMP),
+    workers: 2,
+    downloaderFactory: fake.factory,
+  }), 1);
+
+  assert.equal(
+    readFileSync(
+      join(workspace, "control", "failed_books.txt"),
+      "utf8",
+    ),
+    `1\tNOT_FOUND\t${STAMP}\n` +
+    `2\tNO_MARKERS\t${STAMP}\n` +
+    `3\tDOWNLOAD_ERROR\t${STAMP}\n`,
+  );
+
+  assert.equal(
+    readFileSync(
+      join(workspace, "control", "downloaded_books.txt"),
+      "utf8",
+    ),
+    "4\n",
+  );
+
+  assert.equal(
+    readFileSync(join(workspace, "raw", "2.txt"), "utf8"),
+    "No markers here",
+  );
+
+  assert.equal(existsSync(join(workspace, "raw", "1.txt")), false);
+  assert.equal(existsSync(join(workspace, "raw", "3.txt")), false);
+  assert.equal(fake.closed, true);
+});
+
+test("not-found and missing-marker failures produce exit code 3", async (t) => {
+  const workspace = fixture(t);
+  const fake = fakeDownloader(new Map([
+    [1, new DownloadError("Missing", "NOT_FOUND", 404)],
+    [2, "No markers"],
+  ]));
+
+  assert.equal(await downloadBooks({
+    workspace,
+    bookIds: [1, 2],
+    now: new Date(STAMP),
+    downloaderFactory: fake.factory,
+  }), 3);
+
+  assert.equal(existsSync(join(workspace, "datalake")), false);
+});
+
+test("download overlaps requests and commits in input order", async (t) => {
+  const workspace = fixture(t);
+  const calls = [];
+  let releaseFirst;
+  let active = 0;
+  let peak = 0;
+
+  const firstGate = new Promise((resolveGate) => {
+    releaseFirst = resolveGate;
+  });
+
+  const factory = () => ({
+    async download(bookId) {
+      calls.push(bookId);
+      active += 1;
+      peak = Math.max(peak, active);
+
+      try {
+        if (bookId === 1) {
+          await firstGate;
+        } else if (bookId === 2) {
+          releaseFirst();
+        }
+        return RAW;
+      } finally {
+        active -= 1;
+      }
+    },
+    async close() {},
+  });
+
+  assert.equal(await downloadBooks({
+    workspace,
+    bookIds: [1, 2, 3, 4],
+    layout: "hash",
+    now: new Date(STAMP),
+    workers: 2,
+    downloaderFactory: factory,
+  }), 0);
+
+  assert.equal(peak, 2);
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+
+  assert.equal(
+    readFileSync(
+      join(workspace, "control", "downloaded_books.txt"),
+      "utf8",
+    ),
+    "1\n2\n3\n4\n",
+  );
+});
+
+test("a locked workspace starts no download requests", async (t) => {
+  const workspace = fixture(t);
+  const fake = fakeDownloader(new Map([[42, RAW]]));
+  const lock = await acquireRunLock(workspace);
+
+  try {
+    await assert.rejects(
+      downloadBooks({
+        workspace,
+        bookIds: [42],
+        now: new Date(STAMP),
+        downloaderFactory: fake.factory,
+      }),
+      (error) => error.exitCode === 4,
+    );
+
+    assert.deepEqual(fake.calls, []);
+    assert.equal(existsSync(join(workspace, "raw")), false);
   } finally {
     await lock.release();
   }
