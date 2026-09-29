@@ -51,6 +51,10 @@ import sys
 import time
 from pathlib import Path
 
+# Emit LF on every platform, as required by SPEC §1.1.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(newline="\n")
+
 REPO = Path(__file__).resolve().parents[2]
 for _sub in ("core", "datalake", "datamart"):
     sys.path.insert(0, str(REPO / "src" / "python" / _sub))
