@@ -8,18 +8,9 @@ reproducible from SPEC.md alone: the Node and Go ports are written from the
 specification, never from this source, so anything decided here and not
 written down there is a divergence waiting to happen.
 
-Implemented today
------------------
-    version             SPEC_VERSION + build info
-    query               issue #21 / task T24
-    export-canonical    task T23, driven from an index already on disk
-
-Declared but not implemented
-----------------------------
-The remaining commands are listed so the surface is complete and the exit
-codes stay honest: they fail with code 1 and name the issue that owns them,
-rather than pretending to be absent.  Filling one in is a matter of wiring an
-existing module into `_dispatch`.
+Implemented commands include metadata, the ingestion/index pipeline,
+query and canonical export. Metadata receipt semantics are proposed in
+docs/METADATA_INTEGRATION_PROPOSAL.md and require group review.
 
 Two gaps in SPEC.md that this file had to settle
 ------------------------------------------------
@@ -75,16 +66,14 @@ BACKENDS = ("json", "folder", "sqlite", "mongo")
 
 # Commands that exist in SPEC.md §1 but not yet in this repository, and who
 # owns them.  Keeping them here makes `engine <cmd> --help` honest.
-PENDING = {
-    "metadata": "issue #4 (metadata datamart, PR #81)",
-}
+PENDING = {}
 
 # Commands that write a --metrics-out record.  `version` is not a measurement.
-MEASURED = ("download", "split", "index", "lookup", "scan-new", "control-step",
+MEASURED = ("metadata", "download", "split", "index", "lookup", "scan-new", "control-step",
             "reconcile", "query", "export-canonical")
 
 # Commands that write to the workspace hold control/run.lock (exit 4 if taken).
-WRITERS = ("download", "split", "index", "control-step", "reconcile")
+WRITERS = ("metadata", "download", "split", "index", "control-step", "reconcile")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -289,6 +278,12 @@ def build_parser() -> argparse.ArgumentParser:
     ix.add_argument("--positions", action="store_true")
     ix.add_argument("--batch-size", type=int, default=500)
 
+    md = sub.add_parser("metadata")
+    which = md.add_mutually_exclusive_group(required=True)
+    which.add_argument("--book-id", type=int)
+    which.add_argument("--all", action="store_true")
+    md.add_argument("--batch-size", type=int, default=500)
+
     lk = sub.add_parser("lookup")
     lk.add_argument("--book-id", type=int, required=True)
 
@@ -322,11 +317,12 @@ def _dispatch(args, aux: dict) -> int:
         return cmd_query(args)
     if args.command == "export-canonical":
         return cmd_export_canonical(args)
-    if args.command in ("download", "split", "index", "lookup", "scan-new",
+    if args.command in ("metadata", "download", "split", "index", "lookup", "scan-new",
                         "control-step", "reconcile"):
         import pipeline
 
         handler = {
+            "metadata": pipeline.cmd_metadata,
             "download": pipeline.cmd_download,
             "split": pipeline.cmd_split,
             "index": pipeline.cmd_index,
