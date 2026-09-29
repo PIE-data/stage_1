@@ -533,3 +533,90 @@ test("time lookup selects the newest complete bucket after re-splitting", async 
     /Receipt paths/,
   );
 });
+
+test("download refills a free worker while the first request is pending", async (t) => {
+  const workspace = fixture(t);
+  const calls = [];
+  let releaseFirst;
+  let signalThird;
+  let active = 0;
+  let peak = 0;
+  let timer;
+
+  const firstGate = new Promise((resolveGate) => {
+    releaseFirst = resolveGate;
+  });
+
+  const thirdStarted = new Promise((resolveGate) => {
+    signalThird = resolveGate;
+  });
+
+  const operation = downloadBooks({
+    workspace,
+    bookIds: [1, 2, 3, 4],
+    layout: "hash",
+    now: new Date(STAMP),
+    workers: 2,
+    downloaderFactory: () => ({
+      async download(bookId) {
+        calls.push(bookId);
+        active += 1;
+        peak = Math.max(peak, active);
+
+        try {
+          if (bookId === 1) await firstGate;
+          if (bookId === 3) signalThird(true);
+          return RAW;
+        } finally {
+          active -= 1;
+        }
+      },
+      async close() {},
+    }),
+  });
+
+  // Observe failures immediately and always release the blocked request.
+  const completion = operation.then(
+    (exitCode) => ({ exitCode }),
+    (error) => ({ error }),
+  );
+
+  let refilled;
+  let result;
+
+  try {
+    refilled = await Promise.race([
+      thirdStarted,
+      completion.then((outcome) => {
+        if ("error" in outcome) throw outcome.error;
+        throw new Error("Download completed before the first request was released");
+      }),
+      new Promise((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(false), 3000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    releaseFirst();
+    result = await completion;
+  }
+
+  if ("error" in result) throw result.error;
+
+  assert.equal(
+    refilled,
+    true,
+    "Book 3 must start while book 1 is still pending",
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(peak, 2);
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+
+  assert.equal(
+    readFileSync(
+      join(workspace, "control", "downloaded_books.txt"),
+      "utf8",
+    ),
+    "1\n2\n3\n4\n",
+  );
+});

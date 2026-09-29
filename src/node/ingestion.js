@@ -108,6 +108,7 @@ export async function splitCachedBook({
     });
   });
 }
+
 export async function downloadBooks({
   workspace,
   bookIds,
@@ -122,6 +123,7 @@ export async function downloadBooks({
   }
 
   const ids = [...new Set(bookIds)];
+
   for (const bookId of ids) {
     validateInputs(bookId, now);
   }
@@ -141,44 +143,28 @@ export async function downloadBooks({
     if (pendingIds.length === 0) return 0;
 
     const downloader = downloaderFactory({ sourceBase });
-    const pending = new Map();
-    let next = 0;
+    const completed = new Map();
+
+    let nextRequest = 0;
+    let nextCommit = 0;
     let exitCode = 0;
+    let fatal = null;
 
-    function startNext() {
-      if (next >= pendingIds.length) return;
-
-      const bookId = pendingIds[next];
-      next += 1;
-
-      // Capture failures immediately, including synchronous adapter failures.
-      const task = Promise.resolve()
-        .then(() => downloader.download(bookId))
-        .then(
-          (text) => ({ text }),
-          (error) => ({ error }),
-        );
-
-      pending.set(bookId, task);
+    function rawPath(bookId) {
+      return resolve(workspace, "raw", `${bookId}.txt`);
     }
 
-    try {
-      for (let i = 0; i < Math.min(workers, pendingIds.length); i += 1) {
-        startNext();
-      }
+    // This function is synchronous: workers cannot interleave commits.
+    function commitReady() {
+      while (
+        nextCommit < pendingIds.length &&
+        completed.has(nextCommit)
+      ) {
+        const bookId = pendingIds[nextCommit];
+        const outcome = completed.get(nextCommit);
 
-      // Commit results in input order, regardless of network completion order.
-      for (const bookId of pendingIds) {
-        const result = await pending.get(bookId);
-        pending.delete(bookId);
-        startNext();
-
-        if ("error" in result) {
-          if (!(result.error instanceof DownloadError)) {
-            throw result.error;
-          }
-
-          const reason = result.error.reason;
+        if (outcome.error) {
+          const reason = outcome.error.reason;
           control.recordFailure(bookId, reason, instant);
 
           if (reason === "DOWNLOAD_ERROR") {
@@ -186,38 +172,82 @@ export async function downloadBooks({
           } else if (exitCode === 0) {
             exitCode = 3;
           }
+        } else {
+          // Completed texts stay on disk while earlier requests are pending.
+          const text = readFileSync(rawPath(bookId), "utf8");
 
-          continue;
+          const splitCode = ingestText({
+            workspace,
+            bookId,
+            text,
+            storage,
+            layout,
+            now: instant,
+          });
+
+          if (splitCode === 3 && exitCode === 0) {
+            exitCode = 3;
+          }
         }
 
-        // Cache every successful HTTP response before attempting the split.
-        atomicWrite(
-          resolve(workspace, "raw", `${bookId}.txt`),
-          result.text,
-        );
-
-        const splitCode = ingestText({
-          workspace,
-          bookId,
-          text: result.text,
-          storage,
-          layout,
-          now: instant,
-        });
-
-        if (splitCode === 3 && exitCode === 0) {
-          exitCode = 3;
-        }
+        completed.delete(nextCommit);
+        nextCommit += 1;
       }
+    }
+
+    async function worker() {
+      try {
+        while (fatal === null && nextRequest < pendingIds.length) {
+          const index = nextRequest;
+          nextRequest += 1;
+
+          const bookId = pendingIds[index];
+          let text;
+          let outcome;
+
+          try {
+            text = await downloader.download(bookId);
+            outcome = {};
+          } catch (error) {
+            if (!(error instanceof DownloadError)) throw error;
+            outcome = { error };
+          }
+
+          // Another worker may have encountered a fatal filesystem error.
+          if (fatal !== null) return;
+
+          if (!outcome.error) {
+            // Cache before splitting and release the response text promptly.
+            atomicWrite(rawPath(bookId), text);
+            text = undefined;
+          }
+
+          completed.set(index, outcome);
+          commitReady();
+
+          // Claim another request without waiting for earlier books.
+        }
+      } catch (error) {
+        // Stop scheduling, but let all outstanding requests settle.
+        if (fatal === null) fatal = { error };
+      }
+    }
+
+    try {
+      const pool = Array.from(
+        { length: Math.min(workers, pendingIds.length) },
+        () => worker(),
+      );
+
+      // There is one promise per worker, not one per book.
+      await Promise.all(pool);
+
+      if (fatal !== null) throw fatal.error;
 
       return exitCode;
     } finally {
-      // Keep the workspace locked until outstanding requests have settled.
-      try {
-        await Promise.all(pending.values());
-      } finally {
-        await downloader.close();
-      }
+      // All workers have settled before the downloader and lock are released.
+      await downloader.close();
     }
   });
 }
