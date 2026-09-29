@@ -62,6 +62,8 @@ function parseCommand() {
         "batch-size": { type: "string" },
         "metrics-out": { type: "string" },
         "index-backend": { type: "string" },
+        positions: { type: "boolean" },
+        out: { type: "string" },
       },
       allowPositionals: true,
       strict: true,
@@ -76,7 +78,7 @@ function parseCommand() {
   if (
     !values.workspace ||
     positionals.length !== 1 ||
-    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile"].includes(command)
+    !["version", "download", "split", "lookup", "scan-new", "metadata", "reconcile", "index", "export-canonical"].includes(command)
   ) {
     throw new ArgumentError("A workspace and a supported command are required");
   }
@@ -102,10 +104,18 @@ const allowed = new Set([
     }
   }
 
-  if (command === "metadata") {
+  if (command === "metadata" || command === "index") {
   allowed.add("book-id");
   allowed.add("all");
   allowed.add("batch-size");
+  }
+
+    if (command === "index") {
+    allowed.add("positions");
+  }
+
+  if (command === "export-canonical") {
+    allowed.add("out");
   }
 
   for (const name of Object.keys(values)) {
@@ -162,7 +172,7 @@ const allowed = new Set([
     }
   }
 
-  if (command === "metadata") {
+  if (command === "metadata" || command === "index") {
   const hasId = values["book-id"] !== undefined;
   const hasAll = values.all === true;
 
@@ -192,6 +202,17 @@ if (
   throw new ArgumentError("--index-backend must be json, folder, sqlite or mongo");
 }
 
+  if (command === "export-canonical" && !values.out?.trim()) {
+    throw new ArgumentError("export-canonical requires --out <path>");
+  }
+
+  if (
+    ["index", "export-canonical"].includes(command) &&
+    (values["index-backend"] ?? "json") === "mongo"
+  ) {
+    throw new ArgumentError("MongoDB indexing is not implemented");
+  }
+
   return { command, values, layout, now, bookId, workers };
 }
 
@@ -210,6 +231,39 @@ function readManifest(path) {
 
 async function prepareOperation(context) {
   const { command, values, layout, now, bookId, workers } = context;
+
+    if (command === "index") {
+    const { indexBooks } = await import("./index_pipeline.js");
+    const batchSize = positiveInteger(
+      values["batch-size"] ?? "500",
+      "--batch-size",
+    );
+
+    return async () => {
+      const result = await indexBooks({
+        workspace: values.workspace,
+        layout,
+        backend: values["index-backend"] ?? "json",
+        bookId,
+        all: values.all === true,
+        positions: values.positions === true,
+        batchSize,
+      });
+
+      console.error(`index: processed ${result.processed}`);
+      return result.exitCode;
+    };
+  }
+
+  if (command === "export-canonical") {
+    const { exportIndex } = await import("./index_pipeline.js");
+
+    return () => exportIndex({
+      workspace: values.workspace,
+      backend: values["index-backend"] ?? "json",
+      out: values.out,
+    });
+  }
 
     if (command === "reconcile") {
     const { reconcileWorkspace } = await import("./control/reconcile.js");
@@ -350,6 +404,17 @@ async function main() {
       ),
     });
 
+        if (command === "index") {
+      record.positions = values.positions === true;
+    } else if (command === "export-canonical") {
+      const { readIndexConfig } = await import("./index_pipeline.js");
+      const config = readIndexConfig(
+        values.workspace,
+        values["index-backend"] ?? "json",
+      );
+      record.positions = config?.positions ?? false;
+    }
+
     return await measureCommand({
       path: values["metrics-out"],
       record,
@@ -358,12 +423,15 @@ async function main() {
   } catch (error) {
     console.error(error.message);
 
-    if (error instanceof ArgumentError) {
+    if (
+    error instanceof ArgumentError ||
+    error.name === "IndexArgumentError"
+    ) {
       console.error(
         "Usage: node src/node/cli.js --workspace <path> " +
         "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
         "[--metrics-out <path>] " +
-        "<version|download|split|metadata|lookup|scan-new|reconcile> [command options]",
+        "<version|download|split|metadata|lookup|scan-new|reconcile|index|export-canonical> [command options]",
       );
       return 2;
     }
