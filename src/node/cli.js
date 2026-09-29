@@ -57,6 +57,8 @@ function parseCommand() {
         workers: { type: "string" },
         "source-base": { type: "string" },
         since: { type: "string" },
+        all: { type: "boolean" },
+        "batch-size": { type: "string" },
       },
       allowPositionals: true,
       strict: true,
@@ -71,7 +73,7 @@ function parseCommand() {
   if (
     !values.workspace ||
     positionals.length !== 1 ||
-    !["version", "download", "split", "lookup", "scan-new"].includes(command)
+    !["version", "download", "split", "lookup", "scan-new", "metadata"].includes(command)
   ) {
     throw new ArgumentError("A workspace and a supported command are required");
   }
@@ -90,6 +92,12 @@ function parseCommand() {
     for (const name of ["book-id", "manifest", "workers", "source-base"]) {
       allowed.add(name);
     }
+  }
+
+  if (command === "metadata") {
+  allowed.add("book-id");
+  allowed.add("all");
+  allowed.add("batch-size");
   }
 
   for (const name of Object.keys(values)) {
@@ -146,8 +154,24 @@ function parseCommand() {
     }
   }
 
+  if (command === "metadata") {
+  const hasId = values["book-id"] !== undefined;
+  const hasAll = values.all === true;
+
+  if (hasId === hasAll) {
+    throw new ArgumentError("Choose exactly one of --book-id or --all");
+  }
+
+  if (hasId) {
+    bookId = positiveInteger(values["book-id"], "--book-id");
+  }
+
+  positiveInteger(values["batch-size"] ?? "500", "--batch-size");
+}
+
   return { command, values, layout, now, bookId, workers };
 }
+
 
 function readManifest(path) {
   const ids = [];
@@ -177,6 +201,28 @@ async function main() {
       console.error(`stage-1-node 0.1.0 | Node ${process.version}`);
       return 0;
     }
+
+    if (command === "metadata") {
+  const { generateMetadata } = await import("./metadata_pipeline.js");
+
+  const result = await generateMetadata({
+    workspace: values.workspace,
+    layout,
+    bookId,
+    all: values.all === true,
+    batchSize: positiveInteger(
+      values["batch-size"] ?? "500",
+      "--batch-size",
+    ),
+  });
+
+  console.error(
+    `metadata: processed ${result.processed}, written ${result.written}, ` +
+    `meta files written ${result.metaFilesWritten}`,
+  );
+
+  return result.exitCode;
+}
 
     if (command === "lookup" || command === "scan-new") {
       const { lookupBook, scanNewBooks } = await import("./datalake_queries.js");
@@ -239,7 +285,7 @@ async function main() {
       console.error(
         "Usage: node src/node/cli.js --workspace <path> " +
         "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
-        "<version|download|split|lookup|scan-new> [command options]",
+        "<version|download|split|metadata|lookup|scan-new> [command options]",
       );
       return 2;
     }

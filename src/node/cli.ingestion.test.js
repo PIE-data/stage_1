@@ -487,3 +487,93 @@ test("CLI scan-new rejects an invalid timestamp", (t) => {
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /--since/);
 });
+
+test("CLI metadata writes records and reports zero writes on repetition", (t) => {
+  const workspace = fixture(t);
+  prepareBook(workspace, "hash", 42);
+
+  const args = [
+    "--datalake-layout", "hash",
+    "metadata", "--all", "--batch-size", "1",
+  ];
+
+  const first = run(workspace, ...args);
+
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stdout, "");
+  assert.match(first.stderr, /processed 1, written 1/);
+  assert.equal(
+    existsSync(join(workspace, "datamarts", "metadata.db")),
+    true,
+  );
+
+  const repeated = run(workspace, ...args);
+
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.equal(repeated.stdout, "");
+  assert.match(repeated.stderr, /processed 1, written 0/);
+});
+
+test("CLI metadata rejects invalid selectors and batch sizes", (t) => {
+  const workspace = fixture(t);
+
+  const cases = [
+    ["metadata"],
+    ["metadata", "--all", "--book-id", "42"],
+    ["metadata", "--book-id", "0"],
+    ["metadata", "--all", "--batch-size", "0"],
+    ["metadata", "--all", "--batch-size", "1.5"],
+  ];
+
+  for (const args of cases) {
+    const result = run(workspace, ...args);
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, "");
+  }
+
+  assert.equal(existsSync(join(workspace, "datamarts")), false);
+});
+
+test("CLI metadata returns 1 for a missing receipt before creating SQLite", (t) => {
+  const workspace = fixture(t);
+  prepareBook(workspace, "hash", 42);
+
+  rmSync(join(
+    workspace, "control", "ingestion", "hash", "42.json",
+  ));
+
+  const result = run(
+    workspace,
+    "--datalake-layout", "hash",
+    "metadata", "--book-id", "42",
+  );
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Cannot read ingestion receipt/);
+  assert.equal(existsSync(join(workspace, "datamarts")), false);
+});
+
+test("CLI metadata returns 3 for a missing book", (t) => {
+  const workspace = fixture(t);
+  const result = run(workspace, "metadata", "--book-id", "42");
+
+  assert.equal(result.status, 3, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(existsSync(join(workspace, "datamarts")), false);
+});
+
+test("CLI metadata returns 4 when the workspace is locked", async (t) => {
+  const workspace = fixture(t);
+  const lock = await acquireRunLock(workspace);
+
+  try {
+    const result = run(workspace, "metadata", "--all");
+
+    assert.equal(result.status, 4, result.stderr);
+    assert.equal(result.stdout, "");
+  } finally {
+    await lock.release();
+  }
+});
