@@ -11,8 +11,13 @@ defending in §4 of the report:
     of this term", that halves the lookups: no hop from the index to a rowid
     table.
   * `df` is kept in its own `terms` table rather than computed with COUNT(*)
-    at query time, because document frequency is read on every query and
-    written once per book.
+    at query time, because document frequency is read on every query.  It is
+    refreshed once per COMMIT, for the terms touched since the last one --
+    not once per book.  Per book, a common term would be re-counted over all
+    its postings for every book added, which grows with the square of the
+    corpus and made bulk building slower than rewriting a whole JSON file.
+    A single-book update (E8 outside a batch) still commits, and so still
+    refreshes df, after that one book.
 
 Positions are stored as a comma-separated TEXT column.  A separate row per
 position would be the textbook normalisation and is the wrong choice here: it
@@ -53,7 +58,14 @@ class SqliteIndex(IndexBackend):
         self._conn = sqlite3.connect(self.path)
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = NORMAL")
+        # 256 MiB page cache instead of SQLite's default 2 MiB: with the
+        # default, inserting into a B-tree larger than the cache re-reads the
+        # same pages from disk over and over (SPEC.md §6.3).
+        self._conn.execute("PRAGMA cache_size = -262144")
         self._conn.executescript(SCHEMA)
+        # Terms whose df is stale.  A TEMP table lives in the connection only,
+        # never in index.db, so nothing about the on-disk format changes.
+        self._conn.execute("CREATE TEMP TABLE IF NOT EXISTS touched (term TEXT PRIMARY KEY)")
         self._conn.commit()
 
     # ---------------------------------------------------------------- storage
@@ -66,8 +78,11 @@ class SqliteIndex(IndexBackend):
                 tf,
                 ",".join(str(p) for p in sorted(pos)) if self.positions else None,
             )
-            for term, (tf, pos) in postings.items()
+            for term, (tf, pos) in sorted(postings.items())
         ]
+        # Sorted by term, i.e. in primary-key order: the B-tree is then walked
+        # left to right instead of jumped around in (§6.3).  Python's str order
+        # is code-point order, the same as SQLite's BINARY collation.
 
         # INSERT OR REPLACE gives idempotency for the terms this book contains
         # (invariant I4); see index_base on why no global cleanup is needed.
@@ -77,16 +92,22 @@ class SqliteIndex(IndexBackend):
             rows,
         )
 
-        # df is recomputed only for the terms this book touched.  Doing it here
-        # rather than at query time keeps reads cheap, which is what E7
-        # measures.
+        # Remember which terms need their df refreshed; commit() does it once
+        # for the whole batch (see the module docstring).
         self._conn.executemany(
-            "INSERT OR REPLACE INTO terms (term, df) VALUES"
-            " (?, (SELECT COUNT(*) FROM postings WHERE term = ?))",
-            [(term, term) for term, _ in postings.items()],
+            "INSERT OR IGNORE INTO touched (term) VALUES (?)",
+            [(term,) for term in postings],
         )
 
     def commit(self) -> None:
+        # df refresh and postings land in the SAME transaction: after a crash
+        # either both are there or neither is (invariant I3).
+        self._conn.execute(
+            "INSERT OR REPLACE INTO terms (term, df)"
+            " SELECT p.term, COUNT(*) FROM postings AS p"
+            " JOIN touched AS t ON t.term = p.term GROUP BY p.term"
+        )
+        self._conn.execute("DELETE FROM touched")
         self._conn.commit()
 
     def close(self) -> None:
