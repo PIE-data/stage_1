@@ -88,3 +88,26 @@ separate requirements.
 
 Normative adoption requires the project's spec-change process and a
 SPEC_VERSION update. This draft does not claim that approval.
+
+## Recovery validation update
+
+The CLI now exposes `reconcile` under the workspace writer lock.
+It reconstructs downloaded IDs from complete header/body pairs,
+restricts indexed IDs to that set, and removes leftover `.part` files.
+
+Two process-termination tests cover the hash layout:
+- After artifacts and the ingestion receipt are written, before the
+  downloaded control-file append.
+- After the temporary body is fsynced, before its rename.
+
+Both tests verify recovery through CLI reconciliation and subsequent
+offline splitting without duplicate downloaded IDs. They passed locally
+on Windows; the Node CI job also passed at commit e94d8de.
+
+The last full local suite passed 214 tests. The additional partial-body
+recovery test subsequently passed in the focused two-test recovery suite.
+
+These tests do not establish power-loss durability or recovery at every
+possible interruption point. Reconciliation does not reconstruct missing
+receipts or fabricate ingestion timestamps. Receipt recovery and migration
+semantics remain proposed, not approved specification changes.
