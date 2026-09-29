@@ -577,3 +577,38 @@ test("CLI metadata returns 4 when the workspace is locked", async (t) => {
     await lock.release();
   }
 });
+
+test("CLI metrics append once per command and version writes no record", (t) => {
+  const workspace = fixture(t);
+  const metrics = join(workspace, "metrics.jsonl");
+
+  const version = run(workspace, "--metrics-out", metrics, "version");
+  assert.equal(version.status, 0, version.stderr);
+  assert.equal(existsSync(metrics), false);
+
+  for (let i = 0; i < 2; i += 1) {
+    const result = run(
+      workspace,
+      "--metrics-out", metrics,
+      "lookup", "--book-id", "42",
+    );
+
+    assert.equal(result.status, 3, result.stderr);
+    assert.equal(result.stdout, "");
+  }
+
+  const rows = readFileSync(metrics, "utf8")
+    .trimEnd()
+    .split("\n")
+    .map(JSON.parse);
+
+  assert.equal(rows.length, 2);
+
+  for (const row of rows) {
+    assert.equal(row.language, "node");
+    assert.equal(row.metric, "wall_time");
+    assert.equal(row.unit, "ms");
+    assert.equal(row.aux.peak_rss_bytes, null);
+    assert.ok(row.value >= 0);
+  }
+});

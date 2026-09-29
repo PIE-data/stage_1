@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { createMetricsRecord, measureCommand } from "./metrics.js";
 
 const SUPPORTED_SPEC_VERSION = "1.1.5";
 const versionFile = new URL("../../spec/SPEC_VERSION", import.meta.url);
@@ -59,6 +60,8 @@ function parseCommand() {
         since: { type: "string" },
         all: { type: "boolean" },
         "batch-size": { type: "string" },
+        "metrics-out": { type: "string" },
+        "index-backend": { type: "string" },
       },
       allowPositionals: true,
       strict: true,
@@ -78,8 +81,13 @@ function parseCommand() {
     throw new ArgumentError("A workspace and a supported command are required");
   }
 
-  const allowed = new Set(["workspace", "datalake-layout", "now"]);
-
+const allowed = new Set([
+  "workspace",
+  "datalake-layout",
+  "now",
+  "metrics-out",
+  "index-backend",
+]);
   if (command === "split" || command === "lookup") {
   allowed.add("book-id");
   }
@@ -169,6 +177,21 @@ function parseCommand() {
   positiveInteger(values["batch-size"] ?? "500", "--batch-size");
 }
 
+  if (
+  values["metrics-out"] !== undefined &&
+  values["metrics-out"].trim() === ""
+) {
+  throw new ArgumentError("--metrics-out requires a non-empty path");
+}
+
+if (
+  !["json", "folder", "sqlite", "mongo"].includes(
+    values["index-backend"] ?? "json",
+  )
+) {
+  throw new ArgumentError("--index-backend must be json, folder, sqlite or mongo");
+}
+
   return { command, values, layout, now, bookId, workers };
 }
 
@@ -185,9 +208,97 @@ function readManifest(path) {
   return ids;
 }
 
+async function prepareOperation(context) {
+  const { command, values, layout, now, bookId, workers } = context;
+
+  if (command === "metadata") {
+    const { generateMetadata } = await import("./metadata_pipeline.js");
+    const batchSize = positiveInteger(
+      values["batch-size"] ?? "500",
+      "--batch-size",
+    );
+
+    return async () => {
+      const result = await generateMetadata({
+        workspace: values.workspace,
+        layout,
+        bookId,
+        all: values.all === true,
+        batchSize,
+      });
+
+      console.error(
+        `metadata: processed ${result.processed}, written ${result.written}, ` +
+        `meta files written ${result.metaFilesWritten}`,
+      );
+
+      return result.exitCode;
+    };
+  }
+
+  if (command === "lookup" || command === "scan-new") {
+    const { lookupBook, scanNewBooks } = await import("./datalake_queries.js");
+    const since = values.since === undefined
+      ? undefined
+      : parseInstant(values.since);
+
+    return async () => {
+      if (command === "lookup") {
+        const paths = lookupBook({
+          workspace: values.workspace,
+          layout,
+          bookId,
+        });
+
+        if (!paths) return 3;
+
+        process.stdout.write(`${paths[0]}\t${paths[1]}\n`);
+        return 0;
+      }
+
+      const ids = scanNewBooks({
+        workspace: values.workspace,
+        layout,
+        since,
+      });
+
+      if (ids.length > 0) {
+        process.stdout.write(`${ids.join("\n")}\n`);
+      }
+
+      return 0;
+    };
+  }
+
+  const { downloadBooks, splitCachedBook } = await import("./ingestion.js");
+
+  const common = {
+    workspace: values.workspace,
+    layout,
+    now,
+  };
+
+  if (command === "split") {
+    return () => splitCachedBook({ ...common, bookId });
+  }
+
+  // Validate manifest IDs before starting the command timer.
+  const bookIds = bookId === undefined
+    ? readManifest(values.manifest)
+    : [bookId];
+
+  return () => downloadBooks({
+    ...common,
+    bookIds,
+    workers,
+    sourceBase: values["source-base"],
+  });
+}
+
 async function main() {
   try {
-    const { command, values, layout, now, bookId, workers } = parseCommand();
+    const context = parseCommand();
+    const { command, values, layout, workers } = context;
     const version = readFileSync(versionFile, "utf8").trim();
 
     if (version !== SUPPORTED_SPEC_VERSION) {
@@ -202,81 +313,28 @@ async function main() {
       return 0;
     }
 
-    if (command === "metadata") {
-  const { generateMetadata } = await import("./metadata_pipeline.js");
+    const operation = await prepareOperation(context);
 
-  const result = await generateMetadata({
-    workspace: values.workspace,
-    layout,
-    bookId,
-    all: values.all === true,
-    batchSize: positiveInteger(
-      values["batch-size"] ?? "500",
-      "--batch-size",
-    ),
-  });
-
-  console.error(
-    `metadata: processed ${result.processed}, written ${result.written}, ` +
-    `meta files written ${result.metaFilesWritten}`,
-  );
-
-  return result.exitCode;
-}
-
-    if (command === "lookup" || command === "scan-new") {
-      const { lookupBook, scanNewBooks } = await import("./datalake_queries.js");
-
-      if (command === "lookup") {
-         const paths = lookupBook({
-           workspace: values.workspace,
-           layout,
-           bookId,
-         });
-
-         if (!paths) return 3;
-
-         process.stdout.write(`${paths[0]}\t${paths[1]}\n`);
-         return 0;
+    if (values["metrics-out"] === undefined) {
+      return await operation();
     }
 
-    const ids = scanNewBooks({
-       workspace: values.workspace,
-       layout,
-       since: values.since === undefined
-         ? undefined
-         : parseInstant(values.since),
+    const record = createMetricsRecord({
+      command,
+      specVersion: version,
+      layout,
+      indexBackend: values["index-backend"] ?? "json",
+      workers,
+      batchSize: positiveInteger(
+        values["batch-size"] ?? "500",
+        "--batch-size",
+      ),
     });
 
-    if (ids.length > 0) {
-       process.stdout.write(`${ids.join("\n")}\n`);
-    }
-
-    return 0;
-   }
-
-    // Load native ingestion dependencies only for ingestion commands.
-    const { downloadBooks, splitCachedBook } = await import("./ingestion.js");
-
-    const common = {
-      workspace: values.workspace,
-      layout,
-      now,
-    };
-
-    if (command === "split") {
-      return await splitCachedBook({ ...common, bookId });
-    }
-
-    const bookIds = bookId === undefined
-      ? readManifest(values.manifest)
-      : [bookId];
-
-    return await downloadBooks({
-      ...common,
-      bookIds,
-      workers,
-      sourceBase: values["source-base"],
+    return await measureCommand({
+      path: values["metrics-out"],
+      record,
+      operation,
     });
   } catch (error) {
     console.error(error.message);
@@ -285,6 +343,7 @@ async function main() {
       console.error(
         "Usage: node src/node/cli.js --workspace <path> " +
         "[--datalake-layout time|book|hash] [--now <ISO8601>] " +
+        "[--metrics-out <path>] " +
         "<version|download|split|metadata|lookup|scan-new> [command options]",
       );
       return 2;
