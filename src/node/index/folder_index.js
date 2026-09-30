@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { atomicWrite } from "../datalake/atomic.js";
-import { buildPostings, canonicalJSON } from "./json_index.js";
+import { buildPostings, writeCanonical } from "./json_index.js";
 
 export function termLocation(term) {
   if (typeof term !== "string" || term.length === 0) {
@@ -135,6 +135,13 @@ export class FolderIndex {
   }
 
   *allEntries() {
+    for (const term of this.allTerms()) {
+      const postings = this.postings(term);
+      if (postings.length > 0) yield [term, postings];
+    }
+  }
+
+  *allTerms() {
     for (const bucket of entries(this.root)) {
       if (!bucket.isDirectory() || !/^[A-Z_]$/u.test(bucket.name)) continue;
 
@@ -148,13 +155,13 @@ export class FolderIndex {
           throw new Error(`Invalid term file location: ${bucket.name}/${file.name}`);
         }
 
-        const postings = this.postings(term);
-        if (postings.length > 0) yield [term, postings];
+        yield term;
       }
     }
   }
 
   exportCanonical(outputPath) {
-    atomicWrite(outputPath, canonicalJSON(this.allEntries()));
+    // Term by term: 1 000 books do not fit in one string.
+    writeCanonical(outputPath, [...this.allTerms()], (term) => this.postings(term));
   }
 }
