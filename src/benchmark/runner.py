@@ -331,14 +331,21 @@ class Runner:
         the old single --now) is never reused by mistake."""
         return f"-h{self.args.books_per_hour}" if layout == "time" else ""
 
-    def indexed_snapshot(self, backend: str, tier: int) -> Path:
+    def indexed_snapshot(self, backend: str, tier: int, lang: str = "python") -> Path:
         """hash-layout tier, indexed with `backend`, plus extra books downloaded
-        but not indexed: the starting point of E8."""
-        snap = self.snapshots / f"indexed-{backend}-{tier}"
+        but not indexed: the starting point of E8.
+
+        The index is built by the language that E8 then updates.  The index
+        files are the same across languages, but how each CLI records that an
+        index was built with positions is not part of SPEC.md (Python and Node
+        keep it in different files), so a Python-built index is not an index
+        another language can extend."""
+        suffix = "" if lang == "python" else f"-{lang}"
+        snap = self.snapshots / f"indexed-{backend}-{tier}{suffix}"
         if not (snap / "control" / "indexed_books.txt").exists():
             copy_snapshot(self.datalake_snapshot("hash", tier), snap)
-            run_setup(cli(self.py(), snap, "hash", backend, "index", "--all", "--positions"),
-                      self.env)
+            run_setup(cli(self.engines(lang), snap, "hash", backend, "index", "--all",
+                          "--positions"), self.env)
             m = self.manifest(f"extra-{tier}", self.extra_ids(tier))
             run_setup(cli(self.py(), snap, "hash", backend, "download", "--manifest", str(m),
                           "--source-base", self.base), self.env)
@@ -496,8 +503,8 @@ class Runner:
         """Update: +50 books onto an indexed tier."""
         for tier in tiers:
             for backend in self.args.backends:
-                snap = self.indexed_snapshot(backend, tier)
                 for lang in self.args.languages:
+                    snap = self.indexed_snapshot(backend, tier, lang)
                     ws = self.work / "ws"
                     self.measure(
                         experiment="E8", lang=lang, layout="hash", backend=backend, tier=tier,
