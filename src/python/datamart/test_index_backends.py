@@ -105,6 +105,51 @@ def test_batch_defers_the_write(tmp_path):
     idx.close()
 
 
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_df_survives_several_batches_and_a_reopen(tmp_path, backend):
+    """df is refreshed per commit in sqlite (§6.3): it must still be exact
+    across batches, re-indexing inside a later batch, and a reopen."""
+    idx = open_index(backend, tmp_path)
+    with idx.batch() as b:
+        b.add_book(1, BOOK_A)
+    with idx.batch() as b:
+        b.add_book(2, BOOK_B)
+        b.add_book(1, BOOK_A)  # re-index inside a batch: no double count
+    idx.add_book(3, [("dog", 2)])  # single-book path, outside any batch
+    idx.close()
+    idx = open_index(backend, tmp_path)
+    assert (idx.df("cat"), idx.df("dog"), idx.df("bird")) == (1, 3, 1)
+    idx.close()
+
+
+def test_sqlite_keeps_no_bookkeeping_in_the_file(tmp_path):
+    import sqlite3
+    idx = open_index("sqlite", tmp_path)
+    idx.add_book(1, BOOK_A)
+    idx.close()
+    con = sqlite3.connect(tmp_path / "datamarts" / "index.db")
+    names = {r[0] for r in con.execute("SELECT name FROM sqlite_master")}
+    con.close()
+    assert "touched" not in names
+
+
+def test_json_file_is_plain_json_dumps(tmp_path):
+    """The chunked writer must produce exactly the bytes of json.dumps (§6.1)."""
+    import json
+    idx = open_index("json", tmp_path)
+    idx.add_book(2, BOOK_B)
+    idx.add_book(1, BOOK_A)
+    idx.close()
+    expected = {
+        "bird": {"df": 1, "postings": [[2, 1, [4]]]},
+        "cat": {"df": 1, "postings": [[1, 3, [1, 5, 9]]]},
+        "dog": {"df": 2, "postings": [[1, 1, [3]], [2, 1, [0]]]},
+    }
+    got = (tmp_path / "datamarts" / "inverted_index.json").read_bytes()
+    assert got == json.dumps(expected, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8")
+
+
 # ------------------------------------------------------- folder-specific rules
 
 
