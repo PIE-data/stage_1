@@ -2,11 +2,6 @@
 """
 Benchmark runner for Stage 1.  Issues #22, #71, #72.
 
-Started by Marcela (repetitions, warm-up, cold cache, external peak RSS);
-extended with a setup phase outside the timer, the experiment matrix, external
-wall-clock timing and aggregation.  docs/TASKS.md, "Protocol" and "Two
-measurement layers", is the contract this file implements.
-
 What it measures -- the MACRO layer: whole CLI commands, timed from outside,
 identical for every language.  Lookup (E2) and query (E7) are too short for
 that and are micro-benchmarked inside each language instead.
