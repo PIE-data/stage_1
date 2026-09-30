@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { splitText } from "../datalake/splitter.js";
 
 import { loadStopwords, tokenize } from "./tokenizer.js";
 
@@ -30,37 +31,7 @@ const expectedById = new Map(
 const stopwords = loadStopwords();
 
 function extractGoldenBody(rawText) {
-  // Normalize line endings before locating the complete marker lines.
-  const lines = rawText
-    .replaceAll("\r\n", "\n")
-    .replaceAll("\r", "\n")
-    .split("\n");
-
-  const startMarker = "*** START OF THE PROJECT GUTENBERG EBOOK";
-  const endMarker = "*** END OF THE PROJECT GUTENBERG EBOOK";
-
-  const startIndex = lines.findIndex((line) => line.includes(startMarker));
-  const endIndex = lines.findLastIndex((line) => line.includes(endMarker));
-
-  assert.ok(startIndex >= 0, "START marker is missing");
-  assert.ok(endIndex > startIndex, "END marker must follow START");
-
-  // Exclude both marker lines, the header and the footer.
-  let body = lines.slice(startIndex + 1, endIndex).join("\n");
-
-  // Apply body cleaning from SPEC.md §2.3.
-  if (body.startsWith("\uFEFF")) {
-    body = body.slice(1);
-  }
-
-  body = body
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+$/u, ""))
-    .join("\n")
-    .replace(/\n{3,}/gu, "\n\n")
-    .trim();
-
-  return `${body}\n`;
+  return splitText(rawText).body;
 }
 
 test("golden assets contain exactly 20 matching book IDs", () => {

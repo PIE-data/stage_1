@@ -8,5 +8,9 @@
   },
   "scripts": {
     "test": "node --test"
+  },
+  "dependencies": {
+    "@lickle/lock": "^0.0.1",
+    "undici": "^7.30.0"
   }
 }

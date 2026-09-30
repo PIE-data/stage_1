@@ -119,9 +119,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm ci --prefix src/node || npm install --prefix src/node
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: npm ci --prefix src/node
       - run: npm test --prefix src/node
-
+      
   go:
     name: go unit tests
     needs: detect
