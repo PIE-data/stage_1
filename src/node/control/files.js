@@ -80,6 +80,20 @@ export class ControlFiles {
     return true;
   }
 
+    // Call only after the entire index batch has been committed.
+  markIndexedBatch(bookIds) {
+    const unique = [...new Set(bookIds)];
+    for (const bookId of unique) validateBookId(bookId);
+
+    const existing = this.indexedIds();
+    const pending = unique.filter((bookId) => !existing.has(bookId));
+
+    if (pending.length === 0) return 0;
+
+    appendDurably(this.indexedPath, `${pending.join("\n")}\n`);
+    return pending.length;
+  }
+
   recordFailure(bookId, reason, instant) {
     validateBookId(bookId);
 
