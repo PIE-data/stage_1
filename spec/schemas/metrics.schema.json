@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Stage 1 command metrics",
+  "description": "Command wall-time records defined by SPEC section 8.",
+  "type": "object",
+  "required": [
+    "run_id", "spec_version", "language", "impl_version",
+    "experiment", "datalake_layout", "index_backend", "positions",
+    "corpus_size", "workers", "batch_size", "repetition",
+    "metric", "value", "unit", "aux", "machine_id", "started_at"
+  ],
+  "properties": {
+    "run_id": { "type": ["string", "null"] },
+    "spec_version": { "type": "string", "minLength": 1 },
+    "language": { "enum": ["python", "node", "go"] },
+    "impl_version": { "type": ["string", "null"] },
+    "experiment": { "type": "string" },
+    "datalake_layout": { "enum": ["time", "book", "hash"] },
+    "index_backend": { "enum": ["json", "folder", "sqlite", "mongo"] },
+    "positions": { "type": "boolean" },
+    "corpus_size": { "$ref": "#/definitions/nullableCount" },
+    "workers": { "type": "integer", "minimum": 1 },
+    "batch_size": { "type": "integer", "minimum": 1 },
+    "repetition": { "$ref": "#/definitions/nullableCount" },
+    "metric": { "const": "wall_time" },
+    "value": { "type": "number", "minimum": 0 },
+    "unit": { "const": "ms" },
+    "aux": {
+      "type": "object",
+      "required": [
+        "peak_rss_bytes", "bytes_written", "files_created",
+        "dirs_created", "docs_processed", "terms_total"
+      ],
+      "properties": {
+        "peak_rss_bytes": { "$ref": "#/definitions/nullableCount" },
+        "bytes_written": { "$ref": "#/definitions/nullableCount" },
+        "files_created": { "$ref": "#/definitions/nullableCount" },
+        "dirs_created": { "$ref": "#/definitions/nullableCount" },
+        "docs_processed": { "$ref": "#/definitions/nullableCount" },
+        "terms_total": { "$ref": "#/definitions/nullableCount" }
+      }
+    },
+    "machine_id": { "type": "string" },
+    "started_at": { "type": "string", "format": "date-time" }
+  },
+  "definitions": {
+    "nullableCount": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    }
+  }
+}
