@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { createMetricsRecord, measureCommand } from "./metrics.js";
 
-const SUPPORTED_SPEC_VERSION = "1.1.6";
+const SUPPORTED_SPEC_VERSION = "1.1.7";
 const versionFile = new URL("../../spec/SPEC_VERSION", import.meta.url);
 
 class ArgumentError extends Error {}
