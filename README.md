@@ -118,9 +118,23 @@ python -m pip install requests pytest jsonschema
 
 ### Go
 
-The Go port is under development. Build and installation instructions must
-be verified against the branch containing its CLI and `go.mod` before the
-Go pipeline is advertised as runnable.
+Install Go 1.22 or newer, then run from the repository root:
+
+```sh
+go -C src/go mod download
+go -C src/go test ./...
+go -C src/go build ./...
+```
+
+Dependency download requires network access unless the modules are already
+cached.
+
+The current Go implementation on main contains the tokenizer library and
+its tests. It does not yet contain `cmd/engine`, so these commands do not
+produce a runnable pipeline CLI.
+
+The Go offline demo and command walkthrough will be added when the CLI
+integration lands.
 
 ## Python CLI
 
