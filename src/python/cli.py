@@ -71,7 +71,7 @@ SPEC_VERSION_FILE = REPO / "spec" / "SPEC_VERSION"
 # The specification this code implements.  SPEC.md line 10: an implementation
 # refuses to run when this differs from spec/SPEC_VERSION, so a spec change
 # that nobody ported fails loudly instead of producing subtly different output.
-SUPPORTED_SPEC_VERSION = "1.1.5"
+SUPPORTED_SPEC_VERSION = "1.1.6"
 STOPWORDS_FILE = REPO / "spec" / "stopwords_en.txt"
 
 LAYOUTS = ("time", "book", "hash")
