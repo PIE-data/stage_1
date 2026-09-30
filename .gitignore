@@ -43,3 +43,6 @@ Thumbs.db
 
 # --- benchmark scratch -----------------------------------------------
 results/smoke/
+
+# Track the Node dependency lockfile for reproducible installs.
+!/src/node/package-lock.json
