@@ -83,10 +83,10 @@ export async function queryIndex({
   let getIds;
 
   if (backend === "json") {
-    const { JsonIndex } = await import("./index/json_index.js");
+    const { JsonIndex, idOf } = await import("./index/json_index.js");
     // Load the monolithic file once per query.
-    const entries = new JsonIndex(root, config).read();
-    getIds = (term) => (entries.get(term) ?? []).map(([id]) => id);
+    const { entries } = new JsonIndex(root, config).load();
+    getIds = (term) => (entries.get(term) ?? []).map(idOf);
   } else {
     const { FolderIndex } = await import("./index/folder_index.js");
     const index = new FolderIndex(root, config);

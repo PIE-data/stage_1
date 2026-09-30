@@ -2,8 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { atomicWrite } from "../datalake/atomic.js";
-import { buildPostings, canonicalJSON, compareTerms } from "./json_index.js";
+import { buildPostings, compareTerms, writeCanonical } from "./json_index.js";
 
 export class SqliteIndex {
   constructor(workspace, { positions = false } = {}) {
@@ -168,7 +167,9 @@ export class SqliteIndex {
   }
 
   exportCanonical(outputPath) {
-    atomicWrite(outputPath, canonicalJSON(this.allEntries()));
+    // Term by term: 1 000 books do not fit in one string.
+    const terms = this.db.prepare("SELECT term FROM terms").all().map(({ term }) => term);
+    writeCanonical(outputPath, terms, (term) => this.postings(term));
   }
 
   close() {

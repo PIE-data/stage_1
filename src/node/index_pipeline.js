@@ -140,9 +140,9 @@ export async function indexBooksUnderLock({
     try {
       for (let offset = 0; offset < ids.length; offset += batchSize) {
         const batchIds = ids.slice(offset, offset + batchSize);
-        const books = [];
+        const resolved = [];
 
-        // Resolve and tokenize the batch before changing its index artifacts.
+        // Resolve the whole batch before changing its index artifacts.
         for (const id of batchIds) {
           const paths = storage.lookup(id);
 
@@ -150,22 +150,17 @@ export async function indexBooksUnderLock({
             return { exitCode: 3, processed };
           }
 
-          let body;
-
-          try {
-            body = readFileSync(join(root, paths[1]), "utf8");
-          } catch (error) {
-            if (error.code === "ENOENT") {
-              return { exitCode: 3, processed };
-            }
-            throw error;
-          }
-
-          books.push({
-            bookId: id,
-            tokens: tokenize(body, stopwords).tokens,
-          });
+          resolved.push([id, join(root, paths[1])]);
         }
+
+        // Read and tokenize lazily, one book at a time: holding the token
+        // streams of a whole 500-book batch takes gigabytes (1 000-book tier).
+        const books = (function* () {
+          for (const [bookId, bodyPath] of resolved) {
+            const body = readFileSync(bodyPath, "utf8");
+            yield { bookId, tokens: tokenize(body, stopwords).tokens };
+          }
+        })();
 
         if (index === undefined) {
           if (config === null) {
@@ -178,17 +173,26 @@ export async function indexBooksUnderLock({
           index = await openIndex(root, backend, positions);
         }
 
-        if (backend === "sqlite") {
-          index.writeBatch(books);
-        } else {
-          // File backends publish each required artifact atomically.
-          for (const book of books) {
-            index.writeBook(book.bookId, book.tokens);
+        try {
+          if (backend === "sqlite" || backend === "json") {
+            // One load-merge-rewrite per batch for json (SPEC §6.1), one
+            // transaction per batch for sqlite (§6.3); either is all or nothing.
+            index.writeBatch(books);
+          } else {
+            // File backends publish each required artifact atomically.
+            for (const book of books) {
+              index.writeBook(book.bookId, book.tokens);
+            }
           }
+        } catch (error) {
+          if (error.code === "ENOENT") {
+            return { exitCode: 3, processed };
+          }
+          throw error;
         }
 
         control.markIndexedBatch(batchIds);
-        processed += books.length;
+        processed += resolved.length;
       }
 
       return { exitCode: 0, processed };
@@ -217,31 +221,28 @@ export async function exportIndex({
   }
 
   const { DatabaseSync } = await import("node:sqlite");
-  const { canonicalJSON } = await import("./index/json_index.js");
+  const { writeCanonical } = await import("./index/json_index.js");
   const db = new DatabaseSync(artifactPath(root, backend), { readOnly: true });
 
   try {
-    const entries = new Map();
+    // Term by term, never all postings at once: 1 000 books with positions
+    // are millions of rows, too many to materialise in one array.
+    const terms = db.prepare("SELECT DISTINCT term FROM postings")
+      .all().map(({ term }) => term);
+    const select = db.prepare(`
+      SELECT book_id, tf, positions FROM postings
+      WHERE term = ? ORDER BY book_id
+    `);
 
-    const rows = db.prepare(`
-      SELECT term, book_id, tf, positions
-      FROM postings ORDER BY term, book_id
-    `).all();
-
-    for (const row of rows) {
+    writeCanonical(out, terms, (term) => select.all(term).map((row) => {
       if ((row.positions !== null) !== config.positions) {
         throw new Error("Index positions do not match its configuration");
       }
 
-      const posting = row.positions === null
+      return row.positions === null
         ? [row.book_id, row.tf]
         : [row.book_id, row.tf, row.positions.split(",").map(Number)];
-
-      if (!entries.has(row.term)) entries.set(row.term, []);
-      entries.get(row.term).push(posting);
-    }
-
-    atomicWrite(out, canonicalJSON(entries));
+    }));
     return 0;
   } finally {
     db.close();
