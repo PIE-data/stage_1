@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Stage 1 command metrics",
-  "description": "Command wall-time records defined by SPEC section 8.",
+  "description": "Command wall-time records defined by SPEC section 8. A field the command does not have (positions for download, workers for index, ...) is null. aux counters are optional; peak_rss_bytes is measured by the runner, never self-reported.",
   "type": "object",
   "required": [
     "run_id", "spec_version", "language", "impl_version",
@@ -17,20 +17,16 @@
     "experiment": { "type": "string" },
     "datalake_layout": { "enum": ["time", "book", "hash"] },
     "index_backend": { "enum": ["json", "folder", "sqlite", "mongo"] },
-    "positions": { "type": "boolean" },
+    "positions": { "type": ["boolean", "null"] },
     "corpus_size": { "$ref": "#/definitions/nullableCount" },
-    "workers": { "type": "integer", "minimum": 1 },
-    "batch_size": { "type": "integer", "minimum": 1 },
+    "workers": { "type": ["integer", "null"], "minimum": 1 },
+    "batch_size": { "type": ["integer", "null"], "minimum": 1 },
     "repetition": { "$ref": "#/definitions/nullableCount" },
     "metric": { "const": "wall_time" },
     "value": { "type": "number", "minimum": 0 },
     "unit": { "const": "ms" },
     "aux": {
       "type": "object",
-      "required": [
-        "peak_rss_bytes", "bytes_written", "files_created",
-        "dirs_created", "docs_processed", "terms_total"
-      ],
       "properties": {
         "peak_rss_bytes": { "$ref": "#/definitions/nullableCount" },
         "bytes_written": { "$ref": "#/definitions/nullableCount" },
