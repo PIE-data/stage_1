@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.6
+SPEC_VERSION = 1.1.7
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -258,6 +258,19 @@ list_new(since)              -> iterable<book_id>
 
 `book` layout additionally writes `datalake/books/<id>/meta.json` — the parsed metadata record (§5.1). This is an intentional, documented advantage of the layout (self-describing unit), and its storage cost is captured by experiment E5.
 
+- **Who writes it, and when.** The ingestion itself (`download`, `control-step`, `split`), as a third
+  artifact of the book: header, body, then `meta.json`, each atomically (§2.4), then the receipt (§1.2), then
+  the control append. So it exists as soon as the book is in the datalake, and E5 measures it.
+- **Content.** Exactly the §5.1 record of that book, `ingested_at` included (the same instant as the
+  receipt), serialised as one line: keys in the §5.1 order, no spaces, non-ASCII characters written as UTF-8
+  (not `\uXXXX`), then LF — the bytes of `JSON.stringify(record) + "\n"`, i.e. Python
+  `json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"`.
+- **`metadata`** rebuilds the record from the header, body and receipt and rewrites `meta.json` only when
+  it is missing, unreadable or different; an identical file is left untouched. `metadata` never reads
+  `meta.json` as an input.
+- **Not an index.** `lookup`, `scan-new` and `reconcile` ignore it: a book is complete when its header and
+  body exist (§1.2). The `time` and `hash` layouts never write it.
+
 ---
 
 ## 5. Metadata datamart
@@ -423,7 +436,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.6",
+  "spec_version":  "1.1.7",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
