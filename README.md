@@ -113,7 +113,7 @@ source .venv/bin/activate
 Install the runtime and test dependencies used by the project:
 
 ```sh
-python -m pip install requests pytest
+python -m pip install requests pytest jsonschema
 ```
 
 ### Go
@@ -121,6 +121,39 @@ python -m pip install requests pytest
 The Go port is under development. Build and installation instructions must
 be verified against the branch containing its CLI and `go.mod` before the
 Go pipeline is advertised as runnable.
+
+## Python CLI
+
+Run the Python implementation from the repository root:
+
+```sh
+python src/python/cli.py --workspace workspace-python --help
+python src/python/cli.py --workspace workspace-python version
+```
+
+For the command examples below, replace:
+
+```text
+node src/node/cli.js
+```
+
+with:
+
+```text
+python src/python/cli.py
+```
+
+Use a separate Python workspace rather than reusing a Node workspace.
+
+The Python CLI exposes download, split, index, query, lookup, scan-new,
+control-step, reconcile and export-canonical. The common command contract
+is documented in SPEC §1.
+
+**Current limitation:** `metadata` is registered but not implemented.
+Its help identifies issue #4 and PR #81. Do not run the Node metadata
+examples with Python or treat the Python pipeline as metadata-complete.
+
+The one-command sample runner currently selects Node only.
 
 ## Node command examples
 
