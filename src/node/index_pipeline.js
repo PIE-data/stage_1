@@ -78,7 +78,8 @@ export async function openIndex(workspace, backend, positions) {
   throw new IndexArgumentError("Unsupported index backend");
 }
 
-export async function indexBooks({
+// Internal operation: the caller must hold the workspace lock.
+export async function indexBooksUnderLock({
   workspace,
   layout = "time",
   backend = "json",
@@ -112,7 +113,7 @@ export async function indexBooks({
 
   const root = resolve(workspace);
 
-  return withRunLock(root, async () => {
+  return (async () => {
     const config = readIndexConfig(root, backend);
 
     if (config !== null && config.positions !== positions) {
@@ -194,7 +195,7 @@ export async function indexBooks({
     } finally {
       index?.close?.();
     }
-  });
+  })();
 }
 
 export async function exportIndex({
@@ -245,4 +246,8 @@ export async function exportIndex({
   } finally {
     db.close();
   }
+}
+
+export async function indexBooks(options) {
+  return withRunLock(options.workspace, () => indexBooksUnderLock(options));
 }

@@ -109,7 +109,8 @@ export async function splitCachedBook({
   });
 }
 
-export async function downloadBooks({
+// Internal operation: the caller must hold the workspace lock.
+export async function downloadBooksUnderLock({
   workspace,
   bookIds,
   layout = "time",
@@ -135,7 +136,7 @@ export async function downloadBooks({
   const instant = new Date(now.getTime());
   const storage = makeStorage(workspace, layout, instant);
 
-  return withRunLock(workspace, async () => {
+  return (async () => {
     const control = new ControlFiles(workspace);
     const downloaded = control.downloadedIds();
     const pendingIds = ids.filter((id) => !downloaded.has(id));
@@ -249,5 +250,9 @@ export async function downloadBooks({
       // All workers have settled before the downloader and lock are released.
       await downloader.close();
     }
-  });
+  })();
+}
+
+export async function downloadBooks(options) {
+  return withRunLock(options.workspace, () => downloadBooksUnderLock(options));
 }
