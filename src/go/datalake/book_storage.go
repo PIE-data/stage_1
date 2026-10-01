@@ -13,12 +13,14 @@ import (
 
 type BookStorage struct {
 	Workspace string
+	Now       *time.Time
 	langMap   map[string]string
 }
 
-func NewBookStorage(workspace string) *BookStorage {
+func NewBookStorage(workspace string, now *time.Time) *BookStorage {
 	return &BookStorage{
 		Workspace: workspace,
+		Now:       now,
 		langMap:   datamart.LoadLanguageMap(workspace),
 	}
 }
@@ -43,7 +45,12 @@ func (s *BookStorage) Write(bookID int, header, body string) (string, string, er
 
 	relHeader := filepath.ToSlash(filepath.Join("datalake", "books", idStr, "header.txt"))
 	relBody := filepath.ToSlash(filepath.Join("datalake", "books", idStr, "body.txt"))
-	ingestedAt := time.Now().UTC().Format(time.RFC3339)
+	var ingestedAt string
+	if s.Now != nil {
+		ingestedAt = s.Now.UTC().Format("2006-01-02T15:04:05Z")
+	} else {
+		ingestedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
 
 	record := datamart.ParseRecord(bookID, header, body, relHeader, relBody, ingestedAt, s.langMap)
 	
