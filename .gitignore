@@ -23,7 +23,8 @@ venv/
 node_modules/
 package-lock.json
 /src/go/engine
-/src/go/**/engine
+/src/go/cmd/engine/engine
+!/src/go/cmd/engine/
 
 # --- LaTeX build artifacts (report.pdf is built, not edited) -----------
 report/*.aux
