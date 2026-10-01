@@ -101,3 +101,15 @@ test("missing title emits a warning and uses Unknown", () => {
   });
   assert.deepEqual(warnings, ["MISSING_TITLE"]);
 });
+test("an indented line under Release date is not appended to it (SPEC §5.2)", () => {
+  const header = [
+    "Title: Pride and Prejudice",
+    "Release date: June 1, 1998 [eBook #1342]",
+    "                Most recently updated: May 4, 2021",
+    "Language: English",
+  ].join("\n");
+
+  const parsed = parseHeader(header, { warn: () => {} });
+  assert.equal(parsed.release_date, "1998-06-01");
+  assert.equal(parsed.language, "en");
+});

@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.7
+SPEC_VERSION = 1.1.8
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -301,7 +301,7 @@ Paths are stored **relative to the workspace root**. Absolute paths would break 
 The header is a sequence of `Field: value` lines, possibly with continuation lines indented by whitespace.
 
 - Field matching is **case-insensitive** on the field name, anchored at line start.
-- A line that starts with whitespace and follows a recognised field is a **continuation**: append it to the previous value separated by a single space.
+- A line that starts with whitespace and follows a recognised field is a **continuation**: append it to the previous value separated by a single space. **Exception:** `Release date` is single-line — Gutenberg indents auxiliary lines under it (`Most recently updated: …`), so an indented line after `Release date` is ignored and ends that field.
 - `Title` → `title`. Required; if absent, `title = "Unknown"` and a `MISSING_TITLE` warning is logged.
 - `Author` → `author`. If absent, `null`. Strip a trailing `, <years>` life-span suffix (e.g. `Austen, Jane, 1775-1817`). Names in `Surname, Given` form are **kept verbatim**; normalising them is a Stage 2 concern and would diverge across implementations.
 - `Language` → `language`, mapped to ISO 639-1 via `spec/language_map.txt`; unmapped values are stored lowercased as-is.
@@ -436,7 +436,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.7",
+  "spec_version":  "1.1.8",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
