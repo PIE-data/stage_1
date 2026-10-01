@@ -1,6 +1,7 @@
+from .ingestion import finish_ingestion
 import os
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple, Iterable
 
@@ -8,8 +9,9 @@ from .atomic import atomic_write
 from .base import DatalakeStorage
 
 class BatchBasedStorage(DatalakeStorage):
-    def __init__(self, workspace: Path | str):
+    def __init__(self, workspace: Path | str, now: datetime | None = None):
         self.workspace = Path(workspace)
+        self._now = now
         self.root = self.workspace / "datalake"
 
     def _get_target_dir(self, book_id: int) -> Path:
@@ -24,8 +26,12 @@ class BatchBasedStorage(DatalakeStorage):
         header_path = target_dir / f"{book_id}.header.txt"
         body_path = target_dir / f"{book_id}.body.txt"
 
+        timestamp = self._now or datetime.now(timezone.utc)
         atomic_write(header_path, header)
         atomic_write(body_path, body)
+        paths = (header_path.relative_to(self.workspace).as_posix(),
+                 body_path.relative_to(self.workspace).as_posix())
+        finish_ingestion(self.workspace, "hash", book_id, paths, timestamp)
         
         return(
             header_path.relative_to(self.workspace).as_posix(),

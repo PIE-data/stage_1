@@ -59,9 +59,9 @@ def make_storage(layout: str, workspace: Path, now: datetime | None = None):
     if layout == "time":
         return TimeBasedStorage(workspace, now=now)
     if layout == "book":
-        return BookBasedStorage(workspace)
+        return BookBasedStorage(workspace, now=now)
     if layout == "hash":
-        return BatchBasedStorage(workspace)
+        return BatchBasedStorage(workspace, now=now)
     raise ValueError(f"unknown datalake layout: {layout!r}")
 
 
@@ -77,16 +77,12 @@ def receipt_path(workspace: Path, layout: str, book_id: int) -> Path:
 
 def write_receipt(workspace: Path, layout: str, book_id: int, header_path: str,
                   body_path: str, instant: datetime) -> None:
-    """The ingestion receipt: the only persisted source of `ingested_at`.
+    """Use the shared SPEC receipt writer, including during reconciliation."""
+    from datalake.ingestion import write_receipt as persist_receipt
 
-    Same bytes as the Node port (JSON.stringify + LF): keys in this order, no
-    spaces.  Written atomically, after the artifacts and before the id is
-    appended to downloaded_books.txt (SPEC.md §1.2, §2.4).
-    """
-    record = {"book_id": book_id, "header_path": header_path,
-              "body_path": body_path, "ingested_at": utc_seconds(instant)}
-    atomic_write(receipt_path(workspace, layout, book_id),
-                 json.dumps(record, separators=(",", ":")) + "\n")
+    persist_receipt(
+        workspace, layout, book_id, header_path, body_path, instant
+    )
 
 
 def store_book(workspace: Path, layout: str, now: datetime | None, tracker: StateTracker,
@@ -480,6 +476,49 @@ def cmd_reconcile(args, aux: dict) -> int:
           f"recovered, {receipts_removed} removed", file=sys.stderr)
     return EXIT_OK
 
+
+# --------------------------------------------------------------- metadata
+
+
+def cmd_metadata(args, aux: dict) -> int:
+    """Build metadata from stored artifacts and persisted ingestion receipts."""
+    from datamart.metadata import MetadataStore, build_metadata_record
+    from datalake.ingestion import read_ingested_at, write_book_metadata
+
+    if args.batch_size < 1:
+        print("--batch-size must be >= 1", file=sys.stderr)
+        return EXIT_USAGE
+    workspace = Path(args.workspace)
+    storage = make_storage(args.datalake_layout, workspace)
+    ids = ([args.book_id] if args.book_id is not None
+           else sorted(set(storage.list_new(EPOCH))))
+    # Validate all inputs before modifying SQLite or meta.json.
+    inputs = []
+    for book_id in ids:
+        paths = storage.lookup(book_id)
+        if paths is None:
+            print(f"book {book_id} not found in datalake", file=sys.stderr)
+            return EXIT_NOT_FOUND
+        try:
+            stamp = read_ingested_at(workspace, args.datalake_layout, book_id, paths)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_ERROR
+        inputs.append((book_id, paths, stamp))
+    written = 0
+    if inputs:
+        with MetadataStore(workspace) as store:
+            for start in range(0, len(inputs), args.batch_size):
+                records = [build_metadata_record(book_id, workspace, *paths, stamp)
+                           for book_id, paths, stamp in inputs[start:start + args.batch_size]]
+                written += store.upsert(records, batch_size=args.batch_size)
+                if args.datalake_layout == "book":
+                    for record in records:
+                        write_book_metadata(workspace, record["body_path"], record)
+    aux.update(docs_processed=len(inputs), docs_written=written,
+               docs_skipped=len(inputs) - written)
+    print(f"metadata: processed {len(inputs)}, written {written}", file=sys.stderr)
+    return EXIT_OK
 
 def read_receipt(workspace: Path, layout: str, book_id: int) -> dict | None:
     """The receipt if it is well formed and names this book, else None."""
