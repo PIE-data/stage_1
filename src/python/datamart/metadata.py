@@ -87,22 +87,33 @@ def parse_header(header: str) -> dict[str, str | None]:
     current_field = None
 
     for line in header.splitlines():
-        # Release dates are single-line values. Gutenberg may indent
-        # auxiliary fields such as "Most recently updated".
-        if line[:1].isspace() and current_field is not None:
-            if current_field == "release_date":
-                current_field = None
-                continue
+        match = re.match(r"^(Title|Author|Editor|Illustrator|Translator|Release date|Language|Credits):\s*(.*)$", line,
+                         re.IGNORECASE)
 
-            continuation = line.strip()
-            if continuation:
-                fields[current_field] += " " + continuation
-            else:
-                current_field = None
+        # A known field name at column 0 starts a new field
+        if match:
+            field_name, value = match.groups()
+            current_field = FIELDS.get(normalize_whitespace(field_name).lower())
+            if current_field:
+                fields[current_field] = value
             continue
 
+        # Blank lines do NOT end a field
+        if not line.strip():
+            continue
+
+        # An indented non-empty line continues the current field
+        if current_field is not None and line[:1].isspace():
+            # Nothing is ever appended to Release date
+            if current_field != "release_date":
+                fields[current_field] += " " + line.strip()
+            continue
+
+        # A non-empty line at column 0 ends the field continuation
         current_field = None
-        match = re.match(r"^([^:\s][^:]*):\s*(.*)$", line)
+
+        current_field = None
+        match = re.match(r"^(Title|Author|Editor|Illustrator|Translator|Release date|Language|Credits):\s*(.*)$", line, re.IGNORECASE)
 
         if not match:
             continue
@@ -111,8 +122,7 @@ def parse_header(header: str) -> dict[str, str | None]:
         field_name = normalize_whitespace(field_name).lower()
         current_field = FIELDS.get(field_name)
 
-        if current_field is not None:
-            fields[current_field] = value
+        fields[current_field] = value
 
     fields = {
         key: normalize_whitespace(value)
