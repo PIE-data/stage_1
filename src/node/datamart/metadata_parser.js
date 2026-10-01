@@ -107,6 +107,13 @@ export function parseHeader(header, {
     }
 
     if (currentField !== null && /^\s/u.test(line) && line.trim()) {
+      // Release date is a single-line value: Gutenberg indents auxiliary
+      // fields under it ("Most recently updated: ..."), which must not be
+      // appended to the date (SPEC §5.2).
+      if (currentField === "release date") {
+        currentField = null;
+        continue;
+      }
       fields.set(currentField, `${fields.get(currentField)} ${line.trim()}`);
       continue;
     }
