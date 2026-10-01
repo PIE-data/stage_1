@@ -5,7 +5,9 @@
 After installing the prerequisites and Node dependencies below, run from the repository root:
 
 ```sh
-python tools/run_sample.py
+python tools/run_sample.py --lang python
+# OR
+python tools/run_sample.py --lang node
 ```
 
 The demo uses three committed Gutenberg books from `data/sample/`.
@@ -51,7 +53,7 @@ not be compared with `spec/golden/expected.sha256`.
 The required specification version is stored in `spec/SPEC_VERSION`.
 A CLI refuses to run if its supported version differs.
 
-The offline demo currently invokes the Node implementation. It also uses
+The offline demo can invoke either the Python or Node implementation. It uses
 Python's standard library as a portable command runner.
 
 Python and Go are separate implementations. Their availability depends on
@@ -133,8 +135,8 @@ The current Go implementation on main contains the tokenizer library and
 its tests. It does not yet contain `cmd/engine`, so these commands do not
 produce a runnable pipeline CLI.
 
-The Go offline demo and command walkthrough will be added when the CLI
-integration lands.
+The Go offline demo and command walkthrough will be added when the `cmd/engine` CLI
+integration lands. Currently, only the tokenizer, datalake, and metadata libraries are implemented.
 
 ## Python CLI
 
@@ -162,12 +164,6 @@ Use a separate Python workspace rather than reusing a Node workspace.
 The Python CLI exposes download, split, index, query, lookup, scan-new,
 control-step, reconcile and export-canonical. The common command contract
 is documented in SPEC §1.
-
-**Current limitation:** `metadata` is registered but not implemented.
-Its help identifies issue #4 and PR #81. Do not run the Node metadata
-examples with Python or treat the Python pipeline as metadata-complete.
-
-The one-command sample runner currently selects Node only.
 
 ## Node command examples
 
@@ -385,6 +381,3 @@ are retained in the raw files.
 Issue #69 remains open until a teammate who did not implement the pipeline
 has followed the README from a clean checkout and recorded the result for
 each completed language implementation.
-
-Python and Go command walkthroughs and clean-checkout validation remain
-to be completed as their integrations become available.

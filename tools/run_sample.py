@@ -1,4 +1,4 @@
-"""Run the committed Node sample without network access or a mirror."""
+"""Run the committed sample dataset offline, in Python or Node."""
 
 import argparse
 import hashlib
@@ -27,11 +27,22 @@ def main():
     parser.add_argument(
         "--backend", choices=["json", "folder", "sqlite"], default="sqlite"
     )
+    parser.add_argument(
+        "--lang",
+        choices=["python", "node"],
+        default="python",
+        help="The language implementation to run.",
+    )
     args = parser.parse_args()
 
-    node = shutil.which("node")
-    if node is None:
-        parser.error("Node.js is required. Install dependencies before running.")
+    if args.lang == "node":
+        executable = shutil.which("node")
+        if executable is None:
+            parser.error("Node.js is required to run the Node sample.")
+        cli_script = REPO / "src" / "node" / "cli.js"
+    else:
+        executable = sys.executable
+        cli_script = REPO / "src" / "python" / "cli.py"
 
     ids = [
         int(line)
@@ -64,8 +75,8 @@ def main():
         shutil.copyfile(SAMPLE / f"{book_id}.txt", raw / f"{book_id}.txt")
 
     engine = [
-        node,
-        str(REPO / "src" / "node" / "cli.js"),
+        executable,
+        str(cli_script),
         "--workspace", str(workspace),
         "--datalake-layout", args.layout,
         "--index-backend", args.backend,
