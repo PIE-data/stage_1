@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.4
+SPEC_VERSION = 1.1.8
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
@@ -81,6 +81,24 @@ if any failed with `NOT_FOUND` or `NO_MARKERS`, else `0`. `--workers N` keeps ex
 the current layout; it exits `3` if the raw file is missing or has no markers (the latter also recorded in
 `failed_books.txt`).
 
+**Ingestion receipt and `ingested_at`** (§5.1). `ingested_at` is the instant a book's datalake artifacts
+were written — by `download`, `control-step` or `split` — equal to `--now` when given, else the clock at that
+moment; UTC, **whole seconds** (fraction truncated), `YYYY-MM-DDTHH:MM:SSZ`. One instant per book: the
+`time` layout's date/hour folder is derived from the same value. It is persisted, for **every** layout, in
+a receipt `control/ingestion/<layout>/<id>.json`, exactly one line
+`{"book_id":<id>,"header_path":"…","body_path":"…","ingested_at":"…"}` + LF (keys in this order, no
+spaces), written atomically after the artifacts and before the id is appended to `downloaded_books.txt`
+(§2.4). The receipt is the **only** source of `ingested_at`:
+- `metadata` reads it and never the clock, the file system or `--now`; running `metadata` again, with or
+  without `--now`, therefore writes identical records. A selected book without a valid receipt, or whose
+  receipt's paths do not match the layout, is an error (exit `1`) — no timestamp is invented.
+- `meta.json` (§4.2) and the metadata database are derived from it; rebuilding a lost database is
+  `metadata --all`.
+- A `download` that skips an already downloaded book leaves its receipt untouched; `split` is a **new**
+  ingestion and replaces it with its own instant.
+- Receipts live under `control/`, not in the datalake: like `raw/`, they are excluded from E5 (they are
+  identical for the three layouts, one small file per book).
+
 **`index`.** A book is appended to `control/indexed_books.txt` only after the batch containing it is
 committed. `--all` indexes `downloaded − indexed`, ascending by id. Whether an index holds positions is
 fixed when it is first built: adding to it with a different `--positions` setting is an argument error
@@ -107,7 +125,11 @@ them. Exit `0` even when books fail; failures are in `failed_books.txt`.
 **`reconcile`** rewrites `downloaded_books.txt` as exactly the ids whose header **and** body are in the
 datalake (ascending, no duplicates), restricts `indexed_books.txt` to those ids, and deletes leftover
 `*.part` files. It is the recovery path for a crash between an artifact's rename and the control-file
-append (§2.4).
+append (§2.4). It also repairs receipts: a book on disk without a valid receipt gets one whose
+`ingested_at` is the body's modification time truncated to seconds — the signal `scan-new --since` already
+uses for `book` and `hash` — except in the `time` layout when that time falls outside the book's date/hour
+folder, where the start of that hour (`YYYY-MM-DDTHH:00:00Z`) is used so that receipt and path agree. A
+valid receipt is never rewritten; receipts of books no longer in the datalake are deleted.
 
 **`run.lock`.** `download`, `split`, `index`, `control-step` and `reconcile` hold `control/run.lock` for
 their whole run; a second writer exits `4`. It **MUST** be an operating-system lock on an open file
@@ -158,7 +180,7 @@ The header receives steps 1, 2, 5, 6 only.
 write <target>.part  →  flush  →  fsync  →  rename to <target>  →  fsync parent dir
 ```
 
-Only after **all** artifacts for a book are renamed does the id get appended to `control/downloaded_books.txt` (with the file opened in append mode, written, flushed and fsynced).
+Only after **all** artifacts for a book are renamed, and its ingestion receipt written (§1.2), does the id get appended to `control/downloaded_books.txt` (with the file opened in append mode, written, flushed and fsynced).
 
 ---
 
@@ -236,6 +258,19 @@ list_new(since)              -> iterable<book_id>
 
 `book` layout additionally writes `datalake/books/<id>/meta.json` — the parsed metadata record (§5.1). This is an intentional, documented advantage of the layout (self-describing unit), and its storage cost is captured by experiment E5.
 
+- **Who writes it, and when.** The ingestion itself (`download`, `control-step`, `split`), as a third
+  artifact of the book: header, body, then `meta.json`, each atomically (§2.4), then the receipt (§1.2), then
+  the control append. So it exists as soon as the book is in the datalake, and E5 measures it.
+- **Content.** Exactly the §5.1 record of that book, `ingested_at` included (the same instant as the
+  receipt), serialised as one line: keys in the §5.1 order, no spaces, non-ASCII characters written as UTF-8
+  (not `\uXXXX`), then LF — the bytes of `JSON.stringify(record) + "\n"`, i.e. Python
+  `json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"`.
+- **`metadata`** rebuilds the record from the header, body and receipt and rewrites `meta.json` only when
+  it is missing, unreadable or different; an identical file is left untouched. `metadata` never reads
+  `meta.json` as an input.
+- **Not an index.** `lookup`, `scan-new` and `reconcile` ignore it: a book is complete when its header and
+  body exist (§1.2). The `time` and `hash` layouts never write it.
+
 ---
 
 ## 5. Metadata datamart
@@ -257,6 +292,8 @@ list_new(since)              -> iterable<book_id>
 }
 ```
 
+`ingested_at` is copied from the book's ingestion receipt (§1.2), never computed by `metadata`.
+
 Paths are stored **relative to the workspace root**. Absolute paths would break the moment the workspace is copied, and the benchmark runner copies workspaces.
 
 ### 5.2 Header parsing rules
@@ -264,7 +301,7 @@ Paths are stored **relative to the workspace root**. Absolute paths would break 
 The header is a sequence of `Field: value` lines, possibly with continuation lines indented by whitespace.
 
 - Field matching is **case-insensitive** on the field name, anchored at line start.
-- A line that starts with whitespace and follows a recognised field is a **continuation**: append it to the previous value separated by a single space.
+- A line that starts with whitespace and follows a recognised field is a **continuation**: append it to the previous value separated by a single space. **Exception:** `Release date` is single-line — Gutenberg indents auxiliary lines under it (`Most recently updated: …`), so an indented line after `Release date` is ignored and ends that field.
 - `Title` → `title`. Required; if absent, `title = "Unknown"` and a `MISSING_TITLE` warning is logged.
 - `Author` → `author`. If absent, `null`. Strip a trailing `, <years>` life-span suffix (e.g. `Austen, Jane, 1775-1817`). Names in `Surname, Given` form are **kept verbatim**; normalising them is a Stage 2 concern and would diverge across implementations.
 - `Language` → `language`, mapped to ISO 639-1 via `spec/language_map.txt`; unmapped values are stored lowercased as-is.
@@ -276,6 +313,7 @@ The header is a sequence of `Field: value` lines, possibly with continuation lin
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
+PRAGMA cache_size   = -262144;          -- 256 MiB page cache (default 2 MiB thrashes on bulk inserts)
 
 CREATE TABLE IF NOT EXISTS books (
     book_id      INTEGER PRIMARY KEY,
@@ -338,6 +376,7 @@ axis than file-vs-file-vs-network.
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
+PRAGMA cache_size   = -262144;          -- 256 MiB page cache (default 2 MiB thrashes on bulk inserts)
 
 CREATE TABLE IF NOT EXISTS terms (
     term  TEXT    PRIMARY KEY,
@@ -354,6 +393,11 @@ CREATE INDEX IF NOT EXISTS idx_postings_book ON postings(book_id);
 ```
 
 - Inserts use `INSERT OR REPLACE` inside one transaction per `--batch-size` books (idempotency, invariant I4).
+  Each book's rows are inserted in primary-key order (term ascending).
+- `terms.df` is refreshed **once per transaction**, just before it commits, for every term touched since the
+  previous commit: `INSERT OR REPLACE INTO terms SELECT term, COUNT(*) FROM postings WHERE term IN (touched)
+  GROUP BY term`. Refreshing it per book re-counts common terms once for every book added — quadratic in the
+  corpus size. The set of touched terms is kept in a `TEMP` table, never in `index.db`.
 - Single-term query: `SELECT book_id, tf FROM postings WHERE term = ? ORDER BY book_id`.
 - AND-k query: `SELECT book_id FROM postings WHERE term IN (…) GROUP BY book_id HAVING COUNT(*) = k`.
 - `WITHOUT ROWID` is deliberate — it stores the row in the index B-tree itself, halving lookups for this
@@ -392,7 +436,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.4",
+  "spec_version":  "1.1.8",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",

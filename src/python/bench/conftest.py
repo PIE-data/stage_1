@@ -35,7 +35,7 @@ import os
 import socket
 import statistics
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -54,6 +54,9 @@ WORK = Path(os.environ.get("BENCH_MICRO_WORK", "~/bench/work/.micro")).expanduse
 OUT = Path(os.environ.get("BENCH_MICRO_OUT", REPO / "results" / "micro.jsonl"))
 SPEC_VERSION = (REPO / "spec" / "SPEC_VERSION").read_text().strip()
 SEED = 42
+# Same spread as the runner's --books-per-hour: the time layout gets one
+# date/hour folder per 100 books, not a single flat folder (runner docstring).
+BOOKS_PER_HOUR = int(os.environ.get("BENCH_BOOKS_PER_HOUR", "100"))
 
 
 def pytest_collection_modifyitems(config, items):
@@ -85,13 +88,14 @@ def datalake(corpus):
 
     built = {}
     for layout in ("time", "book", "hash"):
-        ws = WORK / f"datalake-{layout}-{TIER}"
+        ws = WORK / (f"datalake-{layout}-{TIER}" + (f"-h{BOOKS_PER_HOUR}" if layout == "time" else ""))
         marker = ws / ".complete"
         if not marker.exists():
-            storage = make_storage(layout, ws, datetime(2026, 1, 1, tzinfo=timezone.utc))
-            for book_id in corpus:
+            start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            for k, book_id in enumerate(corpus):
+                when = start + timedelta(hours=k // BOOKS_PER_HOUR)
                 header, body = split_file(MIRROR / f"{book_id}.txt")
-                storage.write(book_id, header, body)
+                make_storage(layout, ws, when).write(book_id, header, body)
             marker.write_text("ok\n")
         built[layout] = ws
     return built
@@ -123,7 +127,8 @@ def indexes(corpus, datalake):
     return built
 
 
-def record(benchmark, *, experiment: str, layout=None, backend=None, workload=None) -> dict:
+def record(benchmark, *, experiment: str, layout=None, backend=None, workload=None,
+           corpus_size: int | None = None) -> dict:
     """Write one SPEC §8 record from the benchmark's raw timings."""
     data = sorted(t * 1e6 for t in benchmark.stats.stats.data)  # seconds -> us
     q1, _, q3 = statistics.quantiles(data, n=4, method="inclusive")
@@ -133,7 +138,7 @@ def record(benchmark, *, experiment: str, layout=None, backend=None, workload=No
         "spec_version": SPEC_VERSION, "language": "python",
         "impl_version": os.environ.get("BENCH_IMPL_VERSION", "unknown"),
         "experiment": experiment, "datalake_layout": layout, "index_backend": backend,
-        "positions": True if backend else None, "corpus_size": TIER, "workers": None,
+        "positions": True if backend else None, "corpus_size": corpus_size or TIER, "workers": None,
         "batch_size": None, "repetition": None,
         "metric": "latency", "value": round(statistics.median(data), 3), "unit": "us",
         "aux": {"layer": "micro", "tool": "pytest-benchmark", "workload": workload,

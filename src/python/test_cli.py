@@ -211,10 +211,10 @@ def test_unreadable_spec_version_is_detected(tmp_path):
     assert "cannot read" in check_spec_version(tmp_path / "missing")
 
 
-def test_unimplemented_command_names_its_issue(tmp_path):
+def test_metadata_requires_a_selection(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(CLI), "--workspace", str(tmp_path), "metadata"],
         capture_output=True, text=True, check=False,
     )
-    assert proc.returncode == 1
-    assert "issue #" in proc.stderr
+    assert proc.returncode == 2
+    assert "required" in proc.stderr

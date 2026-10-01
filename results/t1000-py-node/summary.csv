@@ -1,0 +1,17 @@
+experiment,metric,unit,language,layout,backend,corpus_size,workers,n,median,q1,q3,iqr,min,max,median_peak_rss_mib,cache
+E3,wall_time,ms,node,book,,1000,,5,459.352,398.776,468.821,70.045,388.977,1825.478,76.6,cold
+E3,wall_time,ms,node,hash,,1000,,5,516.955,454.735,1422.887,968.152,443.373,2119.444,78.9,cold
+E3,wall_time,ms,node,time,,1000,,5,474.265,401.18,479.036,77.856,390.713,1962.449,73.8,cold
+E3,wall_time,ms,python,book,,1000,,5,228.478,213.014,236.384,23.37,191.87,903.304,23.8,cold
+E3,wall_time,ms,python,hash,,1000,,5,195.998,192.255,234.423,42.168,191.864,857.444,23.8,cold
+E3,wall_time,ms,python,time,,1000,,5,235.206,233.812,246.008,12.196,173.896,258.016,23.8,cold
+E3,wall_time_internal,ms,node,book,,1000,,5,15.08,15.01,15.382,0.372,14.912,19.787,76.6,cold
+E3,wall_time_internal,ms,node,hash,,1000,,5,18.762,18.306,19.099,0.793,18.16,20.273,78.9,cold
+E3,wall_time_internal,ms,node,time,,1000,,5,2.697,2.549,3.006,0.457,2.491,8.894,73.8,cold
+E3,wall_time_internal,ms,python,book,,1000,,5,33.746,33.169,33.8,0.631,29.971,36.776,23.8,cold
+E3,wall_time_internal,ms,python,hash,,1000,,5,32.709,32.031,34.673,2.642,31.281,102.094,23.8,cold
+E3,wall_time_internal,ms,python,time,,1000,,5,26.515,21.589,28.746,7.157,20.974,31.851,23.8,cold
+E6,wall_time,ms,python,hash,json,1000,,5,111347.067,111329.028,112559.655,1230.627,109089.602,113124.005,914.6,cold
+E6,wall_time,ms,python,hash,sqlite,1000,,5,125187.745,124934.504,126365.747,1431.243,122635.581,126531.698,462.7,cold
+E6,wall_time_internal,ms,python,hash,json,1000,,5,111141.454,111065.329,112328.134,1262.805,108804.281,112945.997,914.6,cold
+E6,wall_time_internal,ms,python,hash,sqlite,1000,,5,125001.914,124719.029,125696.844,977.815,122416.484,125786.176,462.7,cold
