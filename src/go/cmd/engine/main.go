@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SupportedSpecVersion = "1.1.4"
+const SupportedSpecVersion = "1.1.8"
 
 func findSpecVersion() (string, error) {
 	dir, err := os.Getwd()
