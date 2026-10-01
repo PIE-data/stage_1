@@ -267,3 +267,16 @@ def test_metadata_workspace_can_be_copied(tmp_path):
         assert "Portable Book" in (
             copied / restored["header_path"]
         ).read_text(encoding="utf-8")
+
+def test_release_date_ignores_indented_update_field():
+    from datamart.metadata import parse_header
+
+    result = parse_header(
+        "Title: Example\n"
+        "Release date: June 1, 2005 [eBook #8339]\n"
+        "    Most recently updated: January 1, 2026\n"
+        "Language: English\n"
+    )
+
+    assert result["release_date"] == "2005-06-01"
+    assert result["language"] == "en"

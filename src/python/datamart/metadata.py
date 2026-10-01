@@ -87,8 +87,13 @@ def parse_header(header: str) -> dict[str, str | None]:
     current_field = None
 
     for line in header.splitlines():
-        # Indented lines extend the immediately preceding recognized field.
+        # Release dates are single-line values. Gutenberg may indent
+        # auxiliary fields such as "Most recently updated".
         if line[:1].isspace() and current_field is not None:
+            if current_field == "release_date":
+                current_field = None
+                continue
+
             continuation = line.strip()
             if continuation:
                 fields[current_field] += " " + continuation

@@ -42,9 +42,32 @@ def finish_ingestion(workspace, layout, book_id, paths, instant):
 
 def write_book_metadata(workspace, body_path, record):
     target = (Path(workspace) / body_path).with_name("meta.json")
-    text = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
 
-    if not target.exists() or target.read_bytes() != text.encode("utf-8"):
+    # SPEC §5.1 defines the serialized key order.
+    keys = (
+        "book_id",
+        "title",
+        "author",
+        "language",
+        "release_date",
+        "header_path",
+        "body_path",
+        "body_bytes",
+        "sha256",
+        "ingested_at",
+    )
+    ordered = {key: record[key] for key in keys}
+    text = json.dumps(
+        ordered, ensure_ascii=False, separators=(",", ":")
+    ) + "\n"
+    expected = text.encode("utf-8")
+
+    try:
+        current = target.read_bytes()
+    except OSError:
+        current = None
+
+    if current != expected:
         atomic_write(target, text)
 
 

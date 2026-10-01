@@ -104,3 +104,28 @@ def test_book_json_repaired_without_replacing_database_record(tmp_path):
     assert run(tmp_path, "book", "metadata", "--all") == 0
     with MetadataStore(tmp_path) as db:
         assert json.loads(meta.read_text(encoding="utf-8")) == db.by_id(7)
+
+def test_ingestion_book_metadata_has_exact_spec_bytes(tmp_path):
+    storage = make_storage("book", tmp_path, parse_now(STAMP))
+    header, body = storage.write(
+        7, "Title: Café\nLanguage: English\n", "café\n"
+    )
+
+    expected = {
+        "book_id": 7,
+        "title": "Café",
+        "author": None,
+        "language": "en",
+        "release_date": None,
+        "header_path": header,
+        "body_path": body,
+        "body_bytes": len("café\n".encode("utf-8")),
+        "sha256": hashlib.sha256("café\n".encode("utf-8")).hexdigest(),
+        "ingested_at": STAMP,
+    }
+    expected_bytes = (
+        json.dumps(expected, ensure_ascii=False, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+
+    meta = tmp_path / "datalake/books/7/meta.json"
+    assert meta.read_bytes() == expected_bytes

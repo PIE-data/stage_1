@@ -1,4 +1,4 @@
-# Python metadata integration — SPEC 1.1.6
+# Python metadata integration — SPEC 1.1.7
 
 This document supersedes the earlier proposal targeting SPEC 1.1.3.
 The ingestion receipt contract is now normative in docs/SPEC.md §1.2.
@@ -54,8 +54,8 @@ that artifact bytes have remained unchanged after ingestion.
 
 Windows validation after merging origin/main:
 
-- Metadata parser/store and pipeline tests: 32 passed.
-- Complete Python suite: 240 passed, 18 skipped.
+- Metadata parser/store and pipeline tests: 34 passed.
+- Complete Python suite: 242 passed, 18 skipped.
 - Branch diff whitespace check: passed.
 
 Skipped tests are not counted as validated. This result does not establish
