@@ -11,7 +11,7 @@ func WriteAtomically(targetPath string, data []byte) error {
 		return err
 	}
 	
-	partPath := targetPath + ".path"
+	partPath := targetPath + ".part"
 
 	file, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {

@@ -107,6 +107,10 @@ func ParseHeader(header string, langMap map[string]string) map[string]string {
 	lines := strings.Split(header, "\n")
 	for _, line := range lines {
 		if (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) && currentField != "" {
+			if currentField == "release_date" {
+				currentField = ""
+				continue
+			}
 			cont := strings.TrimSpace(line)
 			if cont != "" {
 				fields[currentField] += " " + cont
