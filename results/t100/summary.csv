@@ -1,0 +1,17 @@
+experiment,metric,unit,language,layout,backend,corpus_size,workers,n,median,q1,q3,iqr,min,max,median_peak_rss_mib,cache
+E6,wall_time,ms,node,hash,json,100,,5,5305.538,5061.929,5532.902,470.973,4872.981,7007.446,406.5,cold
+E6,wall_time,ms,node,hash,sqlite,100,,5,6832.558,6793.21,6966.52,173.31,6719.932,7102.298,314.3,cold
+E6,wall_time,ms,python,hash,json,100,,5,8906.733,8823.937,9639.034,815.097,8823.478,9703.838,147.6,cold
+E6,wall_time,ms,python,hash,sqlite,100,,5,10312.268,10103.876,10515.568,411.692,10006.579,10849.554,110.3,cold
+E6,wall_time_internal,ms,node,hash,json,100,,5,4885.602,4659.438,5155.089,495.651,4473.707,5563.862,406.5,cold
+E6,wall_time_internal,ms,node,hash,sqlite,100,,5,6411.955,6341.375,6529.731,188.356,6315.527,6710.061,314.3,cold
+E6,wall_time_internal,ms,python,hash,json,100,,5,8721.358,8658.002,9469.842,811.84,8653.153,9511.26,147.6,cold
+E6,wall_time_internal,ms,python,hash,sqlite,100,,5,10121.89,9926.04,10321.645,395.605,9844.899,10554.091,110.3,cold
+E8,wall_time,ms,node,hash,json,100,,5,7238.16,7236.652,7565.218,328.566,7032.94,8420.07,825.1,cold
+E8,wall_time,ms,node,hash,sqlite,100,,5,7593.465,7567.55,8724.137,1156.587,7490.872,10009.701,577.2,cold
+E8,wall_time,ms,python,hash,json,100,,5,11037.67,10819.583,11454.766,635.183,10772.226,11816.544,366.2,cold
+E8,wall_time,ms,python,hash,sqlite,100,,5,12421.935,12371.757,12756.61,384.853,11785.346,13125.117,282.3,cold
+E8,wall_time_internal,ms,node,hash,json,100,,5,6838.806,6742.806,6855.616,112.81,6641.085,7113.224,825.1,cold
+E8,wall_time_internal,ms,node,hash,sqlite,100,,5,7138.819,7126.482,8186.083,1059.601,7078.016,8387.18,577.2,cold
+E8,wall_time_internal,ms,python,hash,json,100,,5,10866.996,10653.803,11275.332,621.529,10590.339,11629.139,366.2,cold
+E8,wall_time_internal,ms,python,hash,sqlite,100,,5,12193.872,12184.002,12604.751,420.749,11611.54,12954.768,282.3,cold
