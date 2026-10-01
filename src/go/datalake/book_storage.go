@@ -1,6 +1,7 @@
 package datalake
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -46,7 +47,11 @@ func (s *BookStorage) Write(bookID int, header, body string) (string, string, er
 
 	record := datamart.ParseRecord(bookID, header, body, relHeader, relBody, ingestedAt, s.langMap)
 	
-	metaBytes, err := json.MarshalIndent(record, "", "  ")
+	buffer := &bytes.Buffer{}
+	encoder := json.NewEncoder(buffer)
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(record)
+	metaBytes := buffer.Bytes()
 	if err != nil {
 		return "", "", err
 	}
