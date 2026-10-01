@@ -133,6 +133,22 @@ def test_sqlite_keeps_no_bookkeeping_in_the_file(tmp_path):
     assert "touched" not in names
 
 
+def test_sqlite_df_refresh_does_not_scan_the_whole_index(tmp_path):
+    """The df refresh must search postings by primary key, not scan them:
+    a full scan per commit made adding 50 books read the whole index."""
+    idx = open_index("sqlite", tmp_path)
+    idx.add_book(1, BOOK_A)
+    plan = idx._conn.execute(
+        "EXPLAIN QUERY PLAN INSERT OR REPLACE INTO terms (term, df)"
+        " SELECT term, COUNT(*) FROM postings"
+        " WHERE term IN (SELECT term FROM touched) GROUP BY term").fetchall()
+    idx.close()
+    details = " ".join(row[-1] for row in plan)
+    assert "SCAN postings" not in details and "PRIMARY KEY" in details, details
+    import inspect, index_sqlite
+    assert "WHERE term IN (SELECT term FROM touched)" in inspect.getsource(index_sqlite)
+
+
 def test_json_file_is_plain_json_dumps(tmp_path):
     """The chunked writer must produce exactly the bytes of json.dumps (§6.1)."""
     import json
