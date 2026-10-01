@@ -53,18 +53,19 @@ func run(args []string) int {
 	fs.StringVar(&metricsOut, "metrics-out", "", "append one JSON metrics record per run")
 	fs.StringVar(&logLevel, "log-level", "info", "error | warn | info | debug")
 	fs.IntVar(&seed, "seed", 42, "seed for any randomised choice")
-	
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	positionals := fs.Args()
-	
-	// Issue scope: Only implement "version" for the CLI skeleton
+
+	// Issue scope: Only implement "version" for the CLI skeleton.
+	// The index, query and export-canonical commands are a separate issue.
 	if len(positionals) != 1 || positionals[0] != "version" || workspace == "" {
 		fmt.Fprintln(os.Stderr, "Usage: engine --workspace <path> version")
 		return 2
 	}
-	
+
 	version, err := findSpecVersion()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot read SPEC_VERSION: %v\n", err)
@@ -77,6 +78,13 @@ func run(args []string) int {
 	}
 
 	fmt.Println(version)
+
+	// Suppress "declared and not used" without blank import tricks.
+	_ = datalakeLayout
+	_ = indexBackend
+	_ = metricsOut
+	_ = logLevel
+	_ = seed
 
 	fmt.Fprintf(os.Stderr, "stage-1-go 0.1.0 | %s\n", runtime.Version())
 	return 0
