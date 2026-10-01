@@ -102,10 +102,15 @@ class SqliteIndex(IndexBackend):
     def commit(self) -> None:
         # df refresh and postings land in the SAME transaction: after a crash
         # either both are there or neither is (invariant I3).
+        # `term IN (SELECT ...)`, exactly as SPEC.md §6.3 words it -- not a
+        # JOIN: with the JOIN, SQLite's planner scans the WHOLE postings table
+        # and probes `touched` for each row (EXPLAIN QUERY PLAN: "SCAN p"),
+        # so every commit read the entire index from disk.  The IN form
+        # searches the primary key once per touched term.
         self._conn.execute(
             "INSERT OR REPLACE INTO terms (term, df)"
-            " SELECT p.term, COUNT(*) FROM postings AS p"
-            " JOIN touched AS t ON t.term = p.term GROUP BY p.term"
+            " SELECT term, COUNT(*) FROM postings"
+            " WHERE term IN (SELECT term FROM touched) GROUP BY term"
         )
         self._conn.execute("DELETE FROM touched")
         self._conn.commit()

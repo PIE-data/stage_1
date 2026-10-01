@@ -329,3 +329,65 @@ def test_version_writes_no_metrics(tmp_path):
     out = tmp_path / "m.jsonl"
     assert run(tmp_path, "--metrics-out", str(out), "version") == 0
     assert not out.exists()
+
+
+# ------------------------------------------------- ingestion receipts (#99)
+
+
+def _receipt(ws: Path, layout: str, book_id: int) -> dict:
+    return json.loads((ws / "control" / "ingestion" / layout / f"{book_id}.json").read_text())
+
+
+@pytest.mark.parametrize("layout", ["time", "book", "hash"])
+def test_download_writes_a_receipt_with_the_ingestion_instant(tmp_path, mirror, layout):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:1], layout) == 0
+    receipt = _receipt(ws, layout, FEW[0])
+    assert receipt["ingested_at"] == "2026-01-01T07:30:00Z"  # --now, whole seconds
+    assert receipt["book_id"] == FEW[0]
+    assert (ws / receipt["body_path"]).exists() and (ws / receipt["header_path"]).exists()
+    raw = (ws / "control" / "ingestion" / layout / f"{FEW[0]}.json").read_bytes()
+    assert raw.endswith(b"\n") and b" " not in raw  # the Node port's exact bytes
+
+
+def test_a_skipped_download_keeps_its_receipt(tmp_path, mirror):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:1]) == 0
+    before = _receipt(ws, "hash", FEW[0])
+    assert run(ws, "--now", "2026-05-05T05:05:05Z", "download", "--book-id", str(FEW[0]),
+               "--source-base", mirror) == 0
+    assert _receipt(ws, "hash", FEW[0]) == before
+
+
+def test_split_is_a_new_ingestion(tmp_path, mirror):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:1]) == 0
+    assert run(ws, "--now", "2026-02-02T02:02:02Z", "split", "--book-id", str(FEW[0])) == 0
+    assert _receipt(ws, "hash", FEW[0])["ingested_at"] == "2026-02-02T02:02:02Z"
+
+
+@pytest.mark.parametrize("layout", ["time", "hash"])
+def test_reconcile_recovers_a_lost_receipt_that_matches_the_path(tmp_path, mirror, layout):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:1], layout) == 0
+    path = ws / "control" / "ingestion" / layout / f"{FEW[0]}.json"
+    original = _receipt(ws, layout, FEW[0])
+    path.unlink()                      # crash between the artifacts and the receipt
+    assert run(ws, "reconcile", layout=layout) == 0
+    recovered = _receipt(ws, layout, FEW[0])
+    assert recovered["body_path"] == original["body_path"]
+    if layout == "time":
+        # the body's mtime is "now", outside the backdated 2026-01-01/07 folder:
+        # the folder wins, so receipt and path agree
+        assert recovered["ingested_at"] == "2026-01-01T07:00:00Z"
+
+
+def test_reconcile_keeps_valid_receipts_and_drops_orphans(tmp_path, mirror):
+    ws = tmp_path / "ws"
+    assert download(ws, mirror, FEW[:2]) == 0
+    keep = (ws / "control" / "ingestion" / "hash" / f"{FEW[0]}.json").read_bytes()
+    for artifact in (ws / "datalake").rglob(f"{FEW[1]}.*"):
+        artifact.unlink()              # book 2 is gone from the datalake
+    assert run(ws, "reconcile") == 0
+    assert (ws / "control" / "ingestion" / "hash" / f"{FEW[0]}.json").read_bytes() == keep
+    assert not (ws / "control" / "ingestion" / "hash" / f"{FEW[1]}.json").exists()

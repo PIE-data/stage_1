@@ -1,3 +1,4 @@
+from .ingestion import finish_ingestion
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,9 @@ class TimeBasedStorage(DatalakeStorage):
 
         atomic_write(header_path, header)
         atomic_write(body_path, body)
+        paths = (header_path.relative_to(self.workspace).as_posix(),
+                 body_path.relative_to(self.workspace).as_posix())
+        finish_ingestion(self.workspace, "time", book_id, paths, timestamp)
 
         return (
                 header_path.relative_to(self.workspace).as_posix(),

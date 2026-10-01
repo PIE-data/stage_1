@@ -1,3 +1,4 @@
+from .ingestion import finish_ingestion
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,8 +8,9 @@ from .atomic import atomic_write
 from .base import DatalakeStorage
 
 class BookBasedStorage(DatalakeStorage):
-    def __init__(self, workspace: Path | str):
+    def __init__(self, workspace: Path | str, now: datetime | None = None):
         self.workspace = Path(workspace)
+        self._now = now
         self.root = self.workspace / "datalake" / "books"
 
     def write(self, book_id: int,
@@ -18,8 +20,12 @@ class BookBasedStorage(DatalakeStorage):
         header_path = book_dir / "header.txt"
         body_path = book_dir / "body.txt"
 
+        timestamp = self._now or datetime.now(timezone.utc)
         atomic_write(header_path, header)
         atomic_write(body_path, body)
+        paths = (header_path.relative_to(self.workspace).as_posix(),
+                 body_path.relative_to(self.workspace).as_posix())
+        finish_ingestion(self.workspace, "book", book_id, paths, timestamp)
 
         return(
             header_path.relative_to(self.workspace).as_posix(),

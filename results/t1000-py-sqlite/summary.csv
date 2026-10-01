@@ -1,0 +1,5 @@
+experiment,metric,unit,language,layout,backend,corpus_size,workers,n,median,q1,q3,iqr,min,max,median_peak_rss_mib,cache
+E6,wall_time,ms,python,hash,sqlite,1000,,5,118893.341,116961.801,118954.53,1992.729,116791.455,120914.994,450.5,cold
+E6,wall_time_internal,ms,python,hash,sqlite,1000,,5,118679.839,116739.879,118743.638,2003.759,116587.229,120700.755,450.5,cold
+E8,wall_time,ms,python,hash,sqlite,1000,,5,26348.423,26281.214,28604.686,2323.472,26198.031,28899.891,414.6,cold
+E8,wall_time_internal,ms,python,hash,sqlite,1000,,5,26144.477,26038.48,28392.421,2353.941,26032.085,28681.059,414.6,cold

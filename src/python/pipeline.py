@@ -59,10 +59,44 @@ def make_storage(layout: str, workspace: Path, now: datetime | None = None):
     if layout == "time":
         return TimeBasedStorage(workspace, now=now)
     if layout == "book":
-        return BookBasedStorage(workspace)
+        return BookBasedStorage(workspace, now=now)
     if layout == "hash":
-        return BatchBasedStorage(workspace)
+        return BatchBasedStorage(workspace, now=now)
     raise ValueError(f"unknown datalake layout: {layout!r}")
+
+
+def utc_seconds(instant: datetime) -> str:
+    """`ingested_at` form (SPEC.md §1.2): UTC, whole seconds, trailing Z."""
+    return instant.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def receipt_path(workspace: Path, layout: str, book_id: int) -> Path:
+    """SPEC.md §1.2: control/ingestion/<layout>/<id>.json."""
+    return Path(workspace) / "control" / "ingestion" / layout / f"{book_id}.json"
+
+
+def write_receipt(workspace: Path, layout: str, book_id: int, header_path: str,
+                  body_path: str, instant: datetime) -> None:
+    """Use the shared SPEC receipt writer, including during reconciliation."""
+    from datalake.ingestion import write_receipt as persist_receipt
+
+    persist_receipt(
+        workspace, layout, book_id, header_path, body_path, instant
+    )
+
+
+def store_book(workspace: Path, layout: str, now: datetime | None, tracker: StateTracker,
+               book_id: int, header: str, body: str) -> None:
+    """Artifacts -> receipt -> control append, one instant for all three.
+
+    The instant is fixed once, to whole seconds, BEFORE writing, so the time
+    layout's date/hour folder and the receipt can never disagree -- not even
+    when the clock crosses an hour between the two.
+    """
+    instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    header_path, body_path = make_storage(layout, workspace, instant).write(book_id, header, body)
+    write_receipt(workspace, layout, book_id, header_path, body_path, instant)
+    tracker.mark_downloaded(book_id)  # only after artifacts and receipt (SPEC.md §2.4)
 
 
 def raw_path(workspace: Path, book_id: int) -> Path:
@@ -105,8 +139,8 @@ def _record_positions(workspace: Path, backend: str, positions: bool) -> None:
 # --------------------------------------------------------------- download
 
 
-def fetch_one(workspace: Path, storage, tracker: StateTracker, book_id: int,
-              source_base: str) -> str | None:
+def fetch_one(workspace: Path, layout: str, now: datetime | None, tracker: StateTracker,
+              book_id: int, source_base: str) -> str | None:
     """Download, cache, split and store one book.  None, or the failure REASON.
 
     The caller records failures, so a thread pool never writes failed_books.txt
@@ -127,8 +161,7 @@ def fetch_one(workspace: Path, storage, tracker: StateTracker, book_id: int,
         header, body = split_text(raw)
     except MarkersNotFound:
         return "NO_MARKERS"  # nothing written to the datalake (SPEC.md §2.2)
-    storage.write(book_id, header, body)
-    tracker.mark_downloaded(book_id)  # only after both renames (SPEC.md §2.4)
+    store_book(workspace, layout, now, tracker, book_id, header, body)
     return None
 
 
@@ -145,11 +178,11 @@ def cmd_download(args, aux: dict) -> int:
 
     ids = [args.book_id] if args.book_id is not None else read_manifest(args.manifest)
     tracker = StateTracker(workspace)
-    storage = make_storage(args.datalake_layout, workspace, now)
     todo = [i for i in dict.fromkeys(ids) if not tracker.is_downloaded(i)]
 
     def one(book_id: int) -> tuple[int, str | None]:
-        return book_id, fetch_one(workspace, storage, tracker, book_id, args.source_base)
+        return book_id, fetch_one(workspace, args.datalake_layout, now, tracker, book_id,
+                                  args.source_base)
 
     if args.workers == 1:
         results = [one(i) for i in todo]
@@ -198,9 +231,8 @@ def cmd_split(args, aux: dict) -> int:
         tracker.mark_failed(args.book_id, "NO_MARKERS")
         print(f"book {args.book_id}: markers not found", file=sys.stderr)
         return EXIT_NOT_FOUND
-    storage = make_storage(args.datalake_layout, workspace, now)
-    storage.write(args.book_id, header, body)
-    tracker.mark_downloaded(args.book_id)
+    # A re-split is a new ingestion: new instant, new receipt (SPEC.md §1.2).
+    store_book(workspace, args.datalake_layout, now, tracker, args.book_id, header, body)
     aux.update(body_bytes=len(body.encode("utf-8")))
     return EXIT_OK
 
@@ -364,7 +396,8 @@ def cmd_control_step(args, aux: dict) -> int:
                         if not tracker.is_downloaded(i) and not tracker.is_failed(i)), None)
         if book_id is None:
             break  # nothing left to do: a complete corpus performs zero writes (I4)
-        reason = fetch_one(workspace, storage, tracker, book_id, args.source_base)
+        reason = fetch_one(workspace, args.datalake_layout, now, tracker, book_id,
+                           args.source_base)
         if reason:
             tracker.mark_failed(book_id, reason)
             failed += 1
@@ -394,6 +427,11 @@ def cmd_reconcile(args, aux: dict) -> int:
 
     A book indexed but not yet marked when the crash hit is simply indexed
     again by the next run: re-indexing replaces postings, never duplicates them.
+
+    Ingestion receipts (SPEC.md §1.2): a book on disk without a valid receipt
+    gets one recovered from the file system -- see recovered_instant() -- and
+    receipts of books no longer on disk are deleted.  A valid receipt is never
+    rewritten.
     """
     workspace = Path(args.workspace)
     storage = make_storage(args.datalake_layout, workspace)
@@ -412,10 +450,101 @@ def cmd_reconcile(args, aux: dict) -> int:
     indexed = [i for i in tracker.indexed() if i in set(on_disk)]
     tracker.rewrite(on_disk, indexed)
 
+    receipts_recovered = receipts_removed = 0
+    for book_id in on_disk:
+        header_path, body_path = storage.lookup(book_id)
+        if read_receipt(workspace, args.datalake_layout, book_id) is None:
+            instant = recovered_instant(workspace, args.datalake_layout, body_path)
+            write_receipt(workspace, args.datalake_layout, book_id, header_path, body_path,
+                          instant)
+            receipts_recovered += 1
+    receipts_dir = workspace / "control" / "ingestion" / args.datalake_layout
+    if receipts_dir.exists():
+        keep = {f"{i}.json" for i in on_disk}
+        for receipt in receipts_dir.glob("*.json"):
+            if receipt.name not in keep:
+                receipt.unlink()
+                receipts_removed += 1
+
     added = sorted(set(on_disk) - before)
     dropped = sorted(before - set(on_disk))
-    aux.update(docs_added=len(added), docs_dropped=len(dropped), parts_removed=removed_parts)
+    aux.update(docs_added=len(added), docs_dropped=len(dropped), parts_removed=removed_parts,
+               receipts_recovered=receipts_recovered, receipts_removed=receipts_removed)
     print(f"reconcile: {len(on_disk)} downloaded ({len(added)} recovered, "
           f"{len(dropped)} dropped), {len(indexed)} indexed, "
-          f"{removed_parts} partial file(s) removed", file=sys.stderr)
+          f"{removed_parts} partial file(s) removed, {receipts_recovered} receipt(s) "
+          f"recovered, {receipts_removed} removed", file=sys.stderr)
     return EXIT_OK
+
+
+# --------------------------------------------------------------- metadata
+
+
+def cmd_metadata(args, aux: dict) -> int:
+    """Build metadata from stored artifacts and persisted ingestion receipts."""
+    from datamart.metadata import MetadataStore, build_metadata_record
+    from datalake.ingestion import read_ingested_at, write_book_metadata
+
+    if args.batch_size < 1:
+        print("--batch-size must be >= 1", file=sys.stderr)
+        return EXIT_USAGE
+    workspace = Path(args.workspace)
+    storage = make_storage(args.datalake_layout, workspace)
+    ids = ([args.book_id] if args.book_id is not None
+           else sorted(set(storage.list_new(EPOCH))))
+    # Validate all inputs before modifying SQLite or meta.json.
+    inputs = []
+    for book_id in ids:
+        paths = storage.lookup(book_id)
+        if paths is None:
+            print(f"book {book_id} not found in datalake", file=sys.stderr)
+            return EXIT_NOT_FOUND
+        try:
+            stamp = read_ingested_at(workspace, args.datalake_layout, book_id, paths)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_ERROR
+        inputs.append((book_id, paths, stamp))
+    written = 0
+    if inputs:
+        with MetadataStore(workspace) as store:
+            for start in range(0, len(inputs), args.batch_size):
+                records = [build_metadata_record(book_id, workspace, *paths, stamp)
+                           for book_id, paths, stamp in inputs[start:start + args.batch_size]]
+                written += store.upsert(records, batch_size=args.batch_size)
+                if args.datalake_layout == "book":
+                    for record in records:
+                        write_book_metadata(workspace, record["body_path"], record)
+    aux.update(docs_processed=len(inputs), docs_written=written,
+               docs_skipped=len(inputs) - written)
+    print(f"metadata: processed {len(inputs)}, written {written}", file=sys.stderr)
+    return EXIT_OK
+
+def read_receipt(workspace: Path, layout: str, book_id: int) -> dict | None:
+    """The receipt if it is well formed and names this book, else None."""
+    try:
+        record = json.loads(receipt_path(workspace, layout, book_id).read_text("utf-8"))
+        instant = datetime.strptime(record["ingested_at"], "%Y-%m-%dT%H:%M:%SZ")
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if record.get("book_id") != book_id or not instant:
+        return None
+    return record
+
+
+def recovered_instant(workspace: Path, layout: str, body_path: str) -> datetime:
+    """`ingested_at` for a book whose receipt was lost (SPEC.md §1.2).
+
+    The body's modification time -- the same signal `scan-new --since` already
+    treats as the ingestion instant for book and hash -- truncated to seconds.
+    In the time layout the folder is authoritative: if the mtime falls outside
+    the book's date/hour folder (e.g. it was ingested with a backdated --now),
+    the start of that hour is used, so receipt and path always agree.
+    """
+    mtime = datetime.fromtimestamp((Path(workspace) / body_path).stat().st_mtime,
+                                   timezone.utc).replace(microsecond=0)
+    if layout != "time":
+        return mtime
+    date, hour = body_path.split("/")[1:3]  # datalake/YYYYMMDD/HH/<id>.body.txt
+    start = datetime.strptime(date + hour, "%Y%m%d%H").replace(tzinfo=timezone.utc)
+    return mtime if mtime.strftime("%Y%m%d%H") == date + hour else start

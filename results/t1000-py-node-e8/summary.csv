@@ -1,0 +1,9 @@
+experiment,metric,unit,language,layout,backend,corpus_size,workers,n,median,q1,q3,iqr,min,max,median_peak_rss_mib,cache
+E8,wall_time,ms,node,hash,json,1000,,5,22964.899,19921.618,26750.046,6828.428,18867.235,28959.156,1705.7,cold
+E8,wall_time,ms,node,hash,sqlite,1000,,5,12913.333,12145.795,13366.664,1220.869,11795.158,14159.201,797.6,cold
+E8,wall_time,ms,python,hash,json,1000,,10,22567.501,21607.779,25657.576,4049.797,21133.401,29070.963,1565.8,cold
+E8,wall_time,ms,python,hash,sqlite,1000,,5,27384.249,27133.261,30787.056,3653.795,27127.522,31622.582,414.5,cold
+E8,wall_time_internal,ms,node,hash,json,1000,,5,22423.516,19390.705,25969.139,6578.434,18347.84,28179.498,1705.7,cold
+E8,wall_time_internal,ms,node,hash,sqlite,1000,,5,11714.399,11614.991,12374.226,759.235,11300.727,12404.938,797.6,cold
+E8,wall_time_internal,ms,python,hash,json,1000,,10,22364.569,21383.264,25480.145,4096.88,20898.886,28803.853,1565.8,cold
+E8,wall_time_internal,ms,python,hash,sqlite,1000,,5,27145.246,26917.898,30233.206,3315.308,26555.25,30378.007,414.5,cold
