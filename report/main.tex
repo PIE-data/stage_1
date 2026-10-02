@@ -110,150 +110,76 @@
 	pipeline restartable and idempotent. This foundation will be reused in Stage~2 for
 	ranking, phrase queries, and more advanced search functionality.
 	
-	% ---------------------------------------------------------------------------
+    % ---------------------------------------------------------------------------
 	\section{System Architecture}
+	\label{sec:architecture}
 	% ---------------------------------------------------------------------------
-	The Stage~1 pipeline is divided into three main layers: the datalake, the datamarts, and
-	the control layer. Figure~\ref{fig:architecture} summarizes the data flow and shows how
-	pipeline state is coordinated.
-	
+	The system architecture is structured into three distinct physical and logical layers: the Datalake (raw artifact storage), the Datamarts (structured metadata and indices), and the Control Layer (state tracking and concurrency). The following diagram illustrates the data flow through the pipeline, from external ingestion to querying, with the control layer guiding the execution state.
+
 	\begin{figure}[htbp]
 		\centering
-		\resizebox{0.92\textwidth}{!}{%
-			\begin{tikzpicture}[
-				font=\small,
-				node distance=1.2cm and 1.4cm,
-				box/.style={
-					draw,
-					rounded corners=2pt,
-					align=center,
-					minimum width=3.2cm,
-					minimum height=1.05cm,
-					fill=gray!8
-				},
-				store/.style={
-					draw,
-					rounded corners=2pt,
-					align=center,
-					minimum width=3.4cm,
-					minimum height=1.05cm,
-					fill=gray!15
-				},
-				control/.style={
-					draw,
-					rounded corners=2pt,
-					align=center,
-					text width=7.4cm,
-					minimum height=1.35cm,
-					fill=gray!5
-				},
-				arrow/.style={-{Latex[length=2.4mm]}, thick},
-				controlarrow/.style={-{Latex[length=2.4mm]}, dashed, thick}
-				]
-				
-				% Ingestion path
-				\node[box] (source) {Project Gutenberg\\local mirror};
-				\node[box, right=of source] (ingest) {Download, split\\and clean};
-				\node[store, right=of ingest] (lake) {Datalake\\header + body files};
-				
-				% Datamarts
-				\node[box, below left=1.65cm and 0.15cm of lake] (metadata) {Metadata parser};
-				\node[store, below=0.85cm of metadata] (metadb) {SQLite metadata};
-				
-				\node[box, below right=1.65cm and 0.15cm of lake] (tokenizer) {Tokenizer + normalizer};
-				\node[store, below=0.85cm of tokenizer] (index) {Inverted index\\JSON / Folder / SQLite};
-				
-				% Control layer below the data stores
-				\node[control, below=1.25cm of $(metadb)!0.5!(index)$] (ctrl) {
-					\textbf{Control layer:}
-					\texttt{downloaded\_books.txt},
-					\texttt{indexed\_books.txt},
-					\texttt{failed\_books.txt},
-					ingestion receipts, and the single-writer run lock
-				};
-				
-				% Data flow
-				\draw[arrow] (source) -- (ingest);
-				\draw[arrow] (ingest) -- (lake);
-				\draw[arrow] (lake.south west) -- (metadata.north);
-				\draw[arrow] (lake.south east) -- (tokenizer.north);
-				\draw[arrow] (metadata) -- (metadb);
-				\draw[arrow] (tokenizer) -- (index);
-				
-				% State coordination
-				\draw[controlarrow] (ctrl.north) -- ++(0,0.45) -| (lake.south);
-				
-			\end{tikzpicture}%
-		}
-		\caption{Stage~1 data-layer architecture. Solid arrows represent data flow; the dashed arrow represents pipeline-state coordination by the control layer.}
-		\label{fig:architecture}
+		\begin{tikzpicture}[
+			node distance=1cm and 1.5cm,
+			box/.style={draw, rectangle, minimum width=2.2cm, minimum height=1cm, align=center, fill=blue!5},
+			ctrl/.style={draw, dashed, rectangle, minimum width=10cm, minimum height=1cm, align=center, fill=gray!10},
+			arrow/.style={->, >=stealth, thick}
+		]
+
+		% Main Pipeline
+		\node[box] (download) {Download};
+		\node[box, right=of download] (split) {Split};
+		\node[box, right=of split] (datalake) {Datalake};
+		\node[box, right=of datalake] (datamart) {Metadata / Index};
+		\node[box, right=of datamart] (query) {Query};
+
+		% Control Layer
+		\node[ctrl, below=of datalake] (control) {Control Layer (run.lock, receipts, tracking lists)};
+
+		% Pipeline Arrows
+		\draw[arrow] (download) -- (split);
+		\draw[arrow] (split) -- (datalake);
+		\draw[arrow] (datalake) -- (datamart);
+		\draw[arrow] (datamart) -- (query);
+
+		% Control Interactions (Dashed)
+		\draw[arrow, dashed, <->] (control.west) -| (download);
+		\draw[arrow, dashed, <->] (control) -- (datalake);
+		\draw[arrow, dashed, <->] (control.east) -| (datamart);
+
+		\end{tikzpicture}
+		\caption{System pipeline and Control Layer interaction.}
+		\label{fig:pipeline}
 	\end{figure}
-	
+
 	\subsection{Datalake}
-	
-	The datalake stores the downloaded and cleaned book content as files. For every valid
-	book, the pipeline persists the header and body only after a successful split. Three
-	physical layouts are implemented:
-	
+	The Datalake stores the raw, split artifacts resulting from the ingestion of Gutenberg books. The system guarantees atomic writes for all artifacts and supports three mutually exclusive directory layouts:
 	\begin{itemize}
-		\item \textbf{Time-based layout:}
-		\texttt{datalake/YYYYMMDD/HH/<BOOK\_ID>.body.txt} and the matching header file.
-		This reflects the ingestion time and naturally supports time-oriented incremental
-		processing.
-		
-		\item \textbf{Book-based layout:}
-		\texttt{datalake/books/<BOOK\_ID>/body.txt},
-		\texttt{header.txt}, and auxiliary metadata for that book. This keeps each book's
-		files together.
-		
-		\item \textbf{Batch/prefix layout:}
-		book IDs are zero-padded and grouped by digit prefixes before the body and header
-		files are stored. In the current CLI this layout is named \texttt{hash}, although
-		the directory fan-out is based on digit prefixes rather than a hash function.
+		\item \textbf{Time-based layout:} Artifacts are partitioned by their UTC ingestion instant. The resulting paths are \texttt{datalake/<YYYYMMDD>/<HH>/<id>.body.txt} and \texttt{<id>.header.txt}.
+		\item \textbf{Book-based layout:} Artifacts are grouped by book ID. The paths are \texttt{datalake/books/<id>/body.txt} and \texttt{header.txt}. Additionally, this layout stores a self-describing \texttt{meta.json} file alongside the text artifacts.
+		\item \textbf{Hash-based layout:} Artifacts are sharded using the zero-padded 6-digit decimal representation of the book ID (\texttt{id6}). The paths isolate the first two and second two digits: \texttt{datalake/<id6[0:2]>/<id6[2:4]>/<id>.body.txt} and \texttt{<id>.header.txt}.
 	\end{itemize}
-	
-	Writes follow an atomic protocol so that a crash cannot leave a control record pointing
-	to a partially written file. The write completes before the corresponding book ID is
-	marked as downloaded.
-	
+
 	\subsection{Datamarts}
-	
-	The datamart layer contains structured data used directly by search operations. It has
-	two independent components.
-	
-	\paragraph{Metadata store.}
-	Metadata such as title, author, language, release date, and file paths is parsed from the
-	book header and stored in SQLite. Keeping metadata separate from the full text enables
-	efficient filtering without scanning entire books.
-	
-	\paragraph{Inverted index.}
-	The cleaned body is normalized and tokenized. Stop words and invalid tokens are filtered,
-	while the original token ordinal is preserved as the word position. Each posting stores
-	the document identifier, term frequency, and token positions. Three physical index
-	backends are implemented:
-	
+	The Datamarts transform the raw datalake files into structured queryable formats, separating metadata from the inverted index.
+
+	\paragraph{Metadata Store.}
+	The parsed header fields are stored in a centralized SQLite database located at \texttt{datamarts/metadata.db}. The database utilizes Write-Ahead Logging (WAL) and maintains a \texttt{books} table containing book identities, parsed author/title/language fields, paths relative to the workspace, file byte counts, and ingestion timestamps.
+
+	\paragraph{Inverted Index Backends.}
+	The inverted index records token frequencies and positional data for the document corpus. The architecture implements three interchangeable storage backends:
 	\begin{itemize}
-		\item \textbf{JSON:} one monolithic \texttt{inverted\_index.json} file;
-		\item \textbf{Folder:} one posting-list file per term, grouped into subdirectories;
-		\item \textbf{SQLite:} an embedded database with separate \texttt{terms} and
-		\texttt{postings} tables.
+		\item \textbf{JSON (\texttt{json}):} A monolithic file at \texttt{datamarts/inverted\_index.json}. It acts as a single object mapping terms to their posting lists.
+		\item \textbf{Folder (\texttt{folder}):} A distributed directory structure where each term operates as an independent file: \texttt{datamarts/inverted\_index/<BUCKET>/<safe\_term>.txt}. The bucket is the uppercase first character of the term (or \texttt{\_}), and the filename is percent-encoded to prevent case-collision on diverse filesystems.
+		\item \textbf{SQLite (\texttt{sqlite}):} An embedded B-tree database at \texttt{datamarts/index.db} utilizing WAL mode. It contains a \texttt{terms} table for document frequencies and a \texttt{postings} table utilizing \texttt{WITHOUT ROWID} to store entries directly within the B-tree structure for optimization.
 	\end{itemize}
-	
-	A canonical JSON export is used as a conformance oracle: all three languages and all
-	three mandatory backends must produce equivalent index content for the golden corpus.
-	
+
 	\subsection{Control Layer}
-	
-	The control layer coordinates pipeline progress and provides restartability. At minimum,
-	\texttt{downloaded\_books.txt} records successfully persisted books and
-	\texttt{indexed\_books.txt} records books that have been committed to the index.
-	The implementation also records failed books, keeps ingestion receipts, and uses a
-	single-writer run lock.
-	
-	The main invariant is that the system never marks work as complete before the underlying
-	artifacts have been safely written. On restart, the control layer can reconcile on-disk
-	artifacts with the control files, preventing duplicated processing and allowing the
-	pipeline to recover from interruptions.
+	The Control Layer strictly governs the execution state, pipeline resumption, and concurrency without relying on the physical presence of datalake artifacts. All control mechanisms reside within the \texttt{control/} directory:
+	\begin{itemize}
+		\item \textbf{State Tracking Lists:} \texttt{downloaded\_books.txt} and \texttt{indexed\_books.txt} maintain ascending, newline-separated lists of successfully processed book IDs. \texttt{failed\_books.txt} tracks unprocessable books alongside their error reasons (e.g., \texttt{NO\_MARKERS}).
+		\item \textbf{Concurrency Lock:} \texttt{run.lock} provides a single-writer operating-system lock to safely prevent simultaneous modifications to the workspace by overlapping processes.
+		\item \textbf{Ingestion Receipts:} Small JSON records written to \texttt{control/ingestion/<layout>/<id>.json}. They durably bind a book to its UTC ingestion instant (\texttt{ingested\_at}) and its definitive header and body paths.
+	\end{itemize}
 	
 	% ---------------------------------------------------------------------------
 	\section{Design Decisions}
