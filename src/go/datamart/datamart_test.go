@@ -89,3 +89,24 @@ func TestStoreUpsertIdempotent(t *testing.T) {
 		t.Errorf("Second upsert: got written %d, err %v (want 0, nil)", written, err)
 	}
 }
+
+// SPEC §5.2 (1.1.9): a blank line does not end a field.  Gutenberg ends lines
+// with \r\r\n, so every header line is followed by an empty one after decoding.
+func TestParseHeader_ContinuationAfterBlankLine(t *testing.T) {
+	header := "Title: Chinese literature\n\n" +
+		"        Comprising the Analects of Confucius\n\n" +
+		"Author: Confucius\n\n        Faxian\n\n        Mencius\n\n" +
+		"Release date: November 1, 2003 [eBook #10056]\n\n" +
+		"                Most recently updated: October 28, 2024\n\n" +
+		"Language: English\n"
+	f := ParseHeader(header, map[string]string{"english": "en"})
+	if f["title"] != "Chinese literature Comprising the Analects of Confucius" {
+		t.Errorf("title = %q", f["title"])
+	}
+	if f["author"] != "Confucius Faxian Mencius" {
+		t.Errorf("author = %q", f["author"])
+	}
+	if f["release_date"] != "November 1, 2003 [eBook #10056]" {
+		t.Errorf("release_date = %q", f["release_date"])
+	}
+}
