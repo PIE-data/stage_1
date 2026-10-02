@@ -21,7 +21,11 @@ function utcTimestamp(instant) {
     throw new RangeError("Ingestion year must be between 0000 and 9999");
   }
 
-  return instant.toISOString().replace(".000Z", "Z");
+  // Creiamo un clone per troncare i millisecondi senza alterare l'oggetto originale
+  const clone = new Date(instant.getTime());
+  clone.setUTCMilliseconds(0);
+
+  return clone.toISOString().replace(".000Z", "Z");
 }
 
 function expectedPaths(layout, bookId, instant) {
