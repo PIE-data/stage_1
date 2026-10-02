@@ -60,7 +60,8 @@ def main():
         print(f"Error: Database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Use a fixed seed for reproducible extractions (SPEC §5.4).
+    # Fixed seed AND a fixed input order (every query has ORDER BY): the same
+    # database must always give the same file, or --check is meaningless (SPEC §5.4).
     rng = random.Random(42)
 
     with sqlite3.connect(db_path) as conn:
@@ -68,24 +69,26 @@ def main():
 
         # Q1: 100 random authors (some might be NULL in DB, filter them out)
         all_authors = [r["author"] for r in
-                       conn.execute("SELECT DISTINCT author FROM books WHERE author IS NOT NULL").fetchall()]
+                       conn.execute("SELECT DISTINCT author FROM books WHERE author IS NOT NULL ORDER BY author").fetchall()]
         rng.shuffle(all_authors)
         selected_authors = all_authors[:100]
 
         # Q2: 100 random book IDs
-        all_ids = [r["book_id"] for r in conn.execute("SELECT book_id FROM books").fetchall()]
+        all_ids = [r["book_id"] for r in conn.execute("SELECT book_id FROM books ORDER BY book_id").fetchall()]
         rng.shuffle(all_ids)
         selected_ids = all_ids[:100]
 
         # Q3: 100 random title prefixes (first 10 chars)
-        all_titles = [r["title"] for r in conn.execute("SELECT title FROM books").fetchall()]
-        prefixes = list({title[:10] for title in all_titles if len(title) >= 10})
+        all_titles = [r["title"] for r in conn.execute("SELECT title FROM books ORDER BY book_id").fetchall()]
+        # sorted(): iterating a set of str depends on PYTHONHASHSEED, which made
+        # every run (and --check) produce a different order.
+        prefixes = sorted({title[:10] for title in all_titles if len(title) >= 10})
         rng.shuffle(prefixes)
         selected_prefixes = prefixes[:100]
 
         # Q4: 10 random languages
         all_langs = [r["language"] for r in
-                     conn.execute("SELECT DISTINCT language FROM books WHERE language IS NOT NULL").fetchall()]
+                     conn.execute("SELECT DISTINCT language FROM books WHERE language IS NOT NULL ORDER BY language").fetchall()]
         rng.shuffle(all_langs)
         selected_langs = all_langs[:10]
 
@@ -111,7 +114,7 @@ def main():
         print("Check passed: committed file matches generator.")
         sys.exit(0)
 
-    TARGET_FILE.write_text(content, encoding="utf-8")
+    TARGET_FILE.write_text(content, encoding="utf-8", newline="\n")
     print(f"Successfully wrote {TARGET_FILE}.")
 
 
