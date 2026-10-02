@@ -1,0 +1,403 @@
+\documentclass[12pt,a4paper]{article}
+
+% ---------------------------------------------------------------------------
+% PACKAGES
+% ---------------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, shapes.geometric, calc}
+
+% Slightly more breathing room between paragraphs.
+\setlength{\parskip}{0.75em}
+\setlength{\parindent}{0pt}
+
+\hypersetup{
+	colorlinks=true,
+	linkcolor=black,
+	urlcolor=blue,
+	citecolor=black
+}
+
+\title{Big Data: Search Engine Project\\Stage 1: Building the Data Layer}
+\author{PIE data}
+\date{Academic Year 2026/2027}
+
+\begin{document}
+	
+	\pagenumbering{gobble}
+	
+	% ---------------------------------------------------------------------------
+	% COVER
+	% ---------------------------------------------------------------------------
+	\begin{titlepage}
+		\centering
+		\vspace*{1.5cm}
+		
+		{\Large Universidad de Las Palmas de Gran Canaria\par}
+		\vspace{0.3cm}
+		{\large Grado en Ciencia e Ingeniería de Datos\par}
+		
+		\vspace{1.5cm}
+		
+		{\Huge\bfseries Big Data: Search Engine Project\par}
+		\vspace{0.45cm}
+		{\LARGE Stage 1: Building the Data Layer\par}
+		
+		\vspace{1.6cm}
+		
+		\begin{tabular}{ll}
+			\textbf{Course:} & Big Data \\
+			\textbf{Group:} & PIE data \\
+			\textbf{Repository:} & \url{https://github.com/PIE-data/stage_1} \\
+		\end{tabular}
+		
+		\vspace{1.6cm}
+		
+		{\large\bfseries Group members\par}
+		\vspace{0.45cm}
+		
+		\begin{tabular}{l}
+			Marcela Nieto-Kuczyńska \\
+			Andrea Patruno \\
+			Ivan Colella \\
+			Manuel Muñoz Roca \\
+		\end{tabular}
+		
+		\vfill
+		{\large Academic Year 2026/2027\par}
+	\end{titlepage}
+	
+	\clearpage
+	\pagenumbering{roman}
+	\tableofcontents
+	\clearpage
+	\pagenumbering{arabic}
+	
+	% ---------------------------------------------------------------------------
+	\section{Introduction and Objectives}
+	% ---------------------------------------------------------------------------
+	The overall goal of the Big Data course project is to design and implement a simple
+	search engine from scratch. Stage~1 focuses on the data layer: the part of the system
+	responsible for acquiring documents, transforming them into consistent representations,
+	storing them efficiently, and tracking the state of the pipeline.
+	
+	The dataset is based on Project Gutenberg. Each book is downloaded as plain text and
+	split using the Project Gutenberg start and end markers into a header and a cleaned body.
+	The header is used to extract structured metadata, while the body is tokenized to build
+	a word-level inverted index. The footer is not required by the later search pipeline and
+	is discarded.
+	
+	The objective of this stage is not only to build a working implementation, but also to
+	compare alternative physical storage designs under controlled conditions. The pipeline is
+	implemented in Python, Node.js, and Go, using the same corpora, normalization rules,
+	workloads, and output contract in every language. This allows performance differences to
+	be attributed to implementation and storage choices rather than to differences in
+	functionality.
+	
+	The result of Stage~1 is a reliable and reproducible storage architecture that separates
+	unstructured book content from structured, queryable data. A control layer makes the
+	pipeline restartable and idempotent. This foundation will be reused in Stage~2 for
+	ranking, phrase queries, and more advanced search functionality.
+	
+	% ---------------------------------------------------------------------------
+	\section{System Architecture}
+	% ---------------------------------------------------------------------------
+	The Stage~1 pipeline is divided into three main layers: the datalake, the datamarts, and
+	the control layer. Figure~\ref{fig:architecture} summarizes the data flow and shows how
+	pipeline state is coordinated.
+	
+	\begin{figure}[htbp]
+		\centering
+		\resizebox{0.92\textwidth}{!}{%
+			\begin{tikzpicture}[
+				font=\small,
+				node distance=1.2cm and 1.4cm,
+				box/.style={
+					draw,
+					rounded corners=2pt,
+					align=center,
+					minimum width=3.2cm,
+					minimum height=1.05cm,
+					fill=gray!8
+				},
+				store/.style={
+					draw,
+					rounded corners=2pt,
+					align=center,
+					minimum width=3.4cm,
+					minimum height=1.05cm,
+					fill=gray!15
+				},
+				control/.style={
+					draw,
+					rounded corners=2pt,
+					align=center,
+					text width=7.4cm,
+					minimum height=1.35cm,
+					fill=gray!5
+				},
+				arrow/.style={-{Latex[length=2.4mm]}, thick},
+				controlarrow/.style={-{Latex[length=2.4mm]}, dashed, thick}
+				]
+				
+				% Ingestion path
+				\node[box] (source) {Project Gutenberg\\local mirror};
+				\node[box, right=of source] (ingest) {Download, split\\and clean};
+				\node[store, right=of ingest] (lake) {Datalake\\header + body files};
+				
+				% Datamarts
+				\node[box, below left=1.65cm and 0.15cm of lake] (metadata) {Metadata parser};
+				\node[store, below=0.85cm of metadata] (metadb) {SQLite metadata};
+				
+				\node[box, below right=1.65cm and 0.15cm of lake] (tokenizer) {Tokenizer + normalizer};
+				\node[store, below=0.85cm of tokenizer] (index) {Inverted index\\JSON / Folder / SQLite};
+				
+				% Control layer below the data stores
+				\node[control, below=1.25cm of $(metadb)!0.5!(index)$] (ctrl) {
+					\textbf{Control layer:}
+					\texttt{downloaded\_books.txt},
+					\texttt{indexed\_books.txt},
+					\texttt{failed\_books.txt},
+					ingestion receipts, and the single-writer run lock
+				};
+				
+				% Data flow
+				\draw[arrow] (source) -- (ingest);
+				\draw[arrow] (ingest) -- (lake);
+				\draw[arrow] (lake.south west) -- (metadata.north);
+				\draw[arrow] (lake.south east) -- (tokenizer.north);
+				\draw[arrow] (metadata) -- (metadb);
+				\draw[arrow] (tokenizer) -- (index);
+				
+				% State coordination
+				\draw[controlarrow] (ctrl.north) -- ++(0,0.45) -| (lake.south);
+				
+			\end{tikzpicture}%
+		}
+		\caption{Stage~1 data-layer architecture. Solid arrows represent data flow; the dashed arrow represents pipeline-state coordination by the control layer.}
+		\label{fig:architecture}
+	\end{figure}
+	
+	\subsection{Datalake}
+	
+	The datalake stores the downloaded and cleaned book content as files. For every valid
+	book, the pipeline persists the header and body only after a successful split. Three
+	physical layouts are implemented:
+	
+	\begin{itemize}
+		\item \textbf{Time-based layout:}
+		\texttt{datalake/YYYYMMDD/HH/<BOOK\_ID>.body.txt} and the matching header file.
+		This reflects the ingestion time and naturally supports time-oriented incremental
+		processing.
+		
+		\item \textbf{Book-based layout:}
+		\texttt{datalake/books/<BOOK\_ID>/body.txt},
+		\texttt{header.txt}, and auxiliary metadata for that book. This keeps each book's
+		files together.
+		
+		\item \textbf{Batch/prefix layout:}
+		book IDs are zero-padded and grouped by digit prefixes before the body and header
+		files are stored. In the current CLI this layout is named \texttt{hash}, although
+		the directory fan-out is based on digit prefixes rather than a hash function.
+	\end{itemize}
+	
+	Writes follow an atomic protocol so that a crash cannot leave a control record pointing
+	to a partially written file. The write completes before the corresponding book ID is
+	marked as downloaded.
+	
+	\subsection{Datamarts}
+	
+	The datamart layer contains structured data used directly by search operations. It has
+	two independent components.
+	
+	\paragraph{Metadata store.}
+	Metadata such as title, author, language, release date, and file paths is parsed from the
+	book header and stored in SQLite. Keeping metadata separate from the full text enables
+	efficient filtering without scanning entire books.
+	
+	\paragraph{Inverted index.}
+	The cleaned body is normalized and tokenized. Stop words and invalid tokens are filtered,
+	while the original token ordinal is preserved as the word position. Each posting stores
+	the document identifier, term frequency, and token positions. Three physical index
+	backends are implemented:
+	
+	\begin{itemize}
+		\item \textbf{JSON:} one monolithic \texttt{inverted\_index.json} file;
+		\item \textbf{Folder:} one posting-list file per term, grouped into subdirectories;
+		\item \textbf{SQLite:} an embedded database with separate \texttt{terms} and
+		\texttt{postings} tables.
+	\end{itemize}
+	
+	A canonical JSON export is used as a conformance oracle: all three languages and all
+	three mandatory backends must produce equivalent index content for the golden corpus.
+	
+	\subsection{Control Layer}
+	
+	The control layer coordinates pipeline progress and provides restartability. At minimum,
+	\texttt{downloaded\_books.txt} records successfully persisted books and
+	\texttt{indexed\_books.txt} records books that have been committed to the index.
+	The implementation also records failed books, keeps ingestion receipts, and uses a
+	single-writer run lock.
+	
+	The main invariant is that the system never marks work as complete before the underlying
+	artifacts have been safely written. On restart, the control layer can reconcile on-disk
+	artifacts with the control files, preventing duplicated processing and allowing the
+	pipeline to recover from interruptions.
+	
+	% ---------------------------------------------------------------------------
+	\section{Design Decisions}
+	% ---------------------------------------------------------------------------
+	The implementation choices were made to maximize comparability, reproducibility, and the
+	amount of useful benchmarking that could be completed within the project schedule.
+	
+	\subsection{Programming Languages: Python, Node.js, and Go}
+	
+	Python serves as the reference implementation. Node.js and Go were selected as the two
+	additional languages because they provide meaningfully different runtime models while
+	remaining lightweight to build and execute. Python provides a familiar high-level
+	baseline, Node.js uses the V8 runtime and an event-driven execution model, and Go provides
+	a compiled implementation with lightweight concurrency. Using the same CLI contract
+	across all three keeps the benchmark comparison focused on implementation behavior.
+	
+	\subsection{Index Backends: JSON, Folder, and SQLite}
+	
+	The three mandatory index structures deliberately represent different physical storage
+	strategies: one large file, many small files, and an embedded B-tree database. SQLite was
+	chosen instead of MongoDB because the project brief permits custom index approaches,
+	SQLite requires no external service, and it is already used for the metadata datamart.
+	This avoids introducing network and service-management overhead into the mandatory
+	comparison.
+	
+	\subsection{English-only Corpus and Dataset Tiers}
+	
+	The benchmark corpus is restricted to English-language books so that all implementations
+	can use one fixed stop-word list and identical normalization rules. The planned corpus
+	sizes are 100, 1,000, and 10,000 books. These tiers allow both small controlled runs and
+	a scalability experiment that reaches the order of tens of thousands of documents.
+	
+	\subsection{No Stemming}
+	
+	Stemming is intentionally excluded from Stage~1. Equivalent stemming libraries in Python,
+	Node.js, and Go are not guaranteed to produce byte-identical output for every token.
+	Because the project uses canonical export hashes as a strict conformance test, stemming
+	would introduce an unnecessary source of cross-language divergence. It can be revisited
+	in Stage~2 if the equivalence contract is extended accordingly.
+	
+	\subsection{Word-level Positional Index}
+	
+	The inverted index stores term frequency and token positions in addition to document IDs.
+	This requires more storage than a record-level index, but it preserves information needed
+	for phrase queries and ranking algorithms such as TF-IDF or BM25 in the next stage.
+	
+	\subsection{Local Mirror for Benchmarks}
+	
+	All benchmark downloads use a local HTTP mirror instead of the live Project Gutenberg
+	service. Otherwise, measured ingestion time would be dominated by internet latency and
+	remote rate limiting rather than by the pipeline itself. A separate live-network run may
+	be reported as a sensitivity check, but it is not mixed with the controlled benchmark
+	results.
+	
+	\subsection{Metadata Comparison Out of Scope}
+	
+	The brief describes comparison of alternative metadata stores as optional. For Stage~1,
+	metadata is therefore kept in SQLite and benchmarking effort is concentrated on the two
+	mandatory experimental dimensions: datalake layout and inverted-index structure.
+	
+	% ---------------------------------------------------------------------------
+	\section{Benchmarks and Results}
+	% ---------------------------------------------------------------------------
+	\subsection{Dataset, Methods, and Measures}
+	
+	\begin{table}[H]
+		\centering
+		\caption{Benchmark design used for the Stage~1 evaluation.}
+		\label{tab:dataset-method-measures}
+		\small
+		\begin{tabularx}{\textwidth}{p{0.20\textwidth} X X}
+			\toprule
+			\textbf{Dataset} & \textbf{Method} & \textbf{Measures} \\
+			\midrule
+			20-book golden corpus
+			&
+			Python, Node.js, and Go; all mandatory index backends
+			&
+			Canonical-export equality and conformance checks
+			\\[0.4em]
+			
+			1,000-book English corpus
+			&
+			Language $\times$ datalake layout: time, book, batch/prefix
+			&
+			Download/write throughput; lookup latency; incremental-processing cost;
+			recovery behavior; storage overhead
+			\\[0.4em]
+			
+			1,000-book English corpus
+			&
+			Language $\times$ index backend: JSON, folder, SQLite
+			&
+			Indexing time; query latency; update time; peak RSS; on-disk size; file count
+			\\[0.4em]
+			
+			100 / 1,000 / 10,000 books
+			&
+			Scaling runs for datalake layouts and index backends
+			&
+			Change in wall time, memory/disk footprint, and scalability trend
+			\\
+			\bottomrule
+		\end{tabularx}
+	\end{table}
+	
+	The benchmark protocol uses the same inputs and preprocessing rules for every language.
+	Macro measurements time complete CLI commands from outside the process so that process
+	startup and I/O are treated consistently. Short operations such as lookup and query are
+	measured with language-specific micro-benchmark frameworks and normalized into a common
+	metrics schema. Runs use a local mirror, a clean workspace, repeated measurements, and
+	median/IQR summaries.
+	
+	\subsection{Results}
+	
+	\emph{TODO after the final benchmark run: insert the generated figures from
+		\texttt{report/figures/} and discuss the measured differences between languages,
+		datalake layouts, and index backends. The final text should identify the selected
+		datalake layout and explain that choice using the benchmark results.}
+	
+	\subsection{Threats to Validity}
+	
+	The final interpretation should explicitly account for the fact that measurements are
+	collected on one machine and one filesystem, the corpus is English-only, and even
+	10,000 books remain modest compared with production-scale search systems. The local
+	mirror intentionally removes internet variance, which improves repeatability but means
+	that the benchmark does not measure real-world WAN behavior. Results are summarized over
+	repeated runs, and the first run is treated as warm-up. SQLite is used as the third
+	mandatory index structure instead of MongoDB, so conclusions about database-backed
+	indexing are specific to an embedded relational store.
+	
+	% ---------------------------------------------------------------------------
+	\section{Conclusions and Future Improvements}
+	% ---------------------------------------------------------------------------
+	Stage~1 establishes a common, reproducible data layer for the three implementations.
+	The final conclusion should identify which datalake layout and inverted-index backend
+	were selected after benchmarking and explain that choice using measured trade-offs
+	rather than implementation preference alone.
+	
+	The positional index already contains document frequencies, term frequencies, and token
+	positions needed by later search functionality. Stage~2 can therefore build ranking
+	methods such as TF-IDF or BM25 and phrase-aware queries on top of the existing storage
+	contract. Future work can also evaluate stemming, larger corpora, additional metadata
+	backends, distributed storage, and a REST/API layer once the Stage~1 conformance and
+	performance results are stable.
+	
+\end{document}
