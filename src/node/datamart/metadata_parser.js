@@ -97,28 +97,30 @@ export function parseHeader(header, {
   let currentField = null;
 
   for (const line of header.split(/\r\n|\n|\r/u)) {
-    // Only known field names at column zero start a new field.
     const match = FIELD.exec(line);
 
+    // A known field name at column 0 starts a new field
     if (match) {
       currentField = match[1].toLowerCase();
       fields.set(currentField, match[2]);
       continue;
     }
 
-    if (currentField !== null && /^\s/u.test(line) && line.trim()) {
-      // Release date is a single-line value: Gutenberg indents auxiliary
-      // fields under it ("Most recently updated: ..."), which must not be
-      // appended to the date (SPEC §5.2).
-      if (currentField === "release date") {
-        currentField = null;
-        continue;
-      }
-      fields.set(currentField, `${fields.get(currentField)} ${line.trim()}`);
+    // Blank lines do NOT end a field
+    if (!line.trim()) {
       continue;
     }
 
-    // Blank or unindented non-field lines terminate continuation.
+    // An indented non-empty line continues the current field
+    if (currentField !== null && /^\s/u.test(line)) {
+      // Nothing is ever appended to Release date
+      if (currentField !== "release date") {
+        fields.set(currentField, `${fields.get(currentField)} ${line.trim()}`);
+      }
+      continue;
+    }
+
+    // A non-empty line at column 0 ends the field continuation
     currentField = null;
   }
 

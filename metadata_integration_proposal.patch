@@ -1,0 +1,464 @@
+diff --git a/docs/METADATA_INTEGRATION_PROPOSAL.md b/docs/METADATA_INTEGRATION_PROPOSAL.md
+new file mode 100644
+index 0000000..97651c8
+--- /dev/null
++++ b/docs/METADATA_INTEGRATION_PROPOSAL.md
+@@ -0,0 +1,51 @@
++# Metadata integration — proposal, not an approved specification change
++
++This implementation targets the uploaded SPEC 1.1.3 snapshot. Do not merge
++until the group accepts the observable rules below through its spec-change
++process. SPEC.md, SPEC_VERSION and supported-version constants are unchanged.
++
++## Proposed shared behaviour
++
++- Each successful storage write persists a receipt at
++  `control/ingestion/<layout>/<book_id>.json` containing workspace-relative
++  header/body paths and an ISO8601 UTC ingestion timestamp.
++- The timestamp is the storage write instant, overridden by global `--now`
++  for all layouts. For `time`, it is also used to choose the directory.
++  Offline `split` is a new write/ingestion and receives a new timestamp.
++- Header and body are written first. The book layout also writes its complete
++  `meta.json`; the receipt is written last, before the pipeline marks the book
++  downloaded. The existing atomic-write helper is used for both JSON artifacts.
++  SQLite remains the responsibility of the explicit `metadata` command.
++- `metadata --all` enumerates the selected layout, sorts and deduplicates IDs;
++  `metadata --book-id` selects one book. It reads persisted timestamps only:
++  it does not infer them from mtime, the current clock or hour-only paths.
++- Missing books exit 3. Missing, mismatching or malformed receipts exit 1.
++  All receipt/path validation occurs before metadata writes. Old workspaces
++  need an explicit migration decision; no historical timestamp is fabricated.
++  A caller may re-split cached raw files as a NEW ingestion, but this does not
++  recover the original ingestion timestamp.
++- `--batch-size` is accepted for metadata (default 500, positive). Records
++  are built and written one batch at a time. Repeated identical records cause
++  zero SQLite row writes and do not replace identical book meta.json files.
++- Metadata uses the existing workspace writer lock (exit 4 on contention),
++  emits metrics when requested, and writes summaries only to stderr.
++- Empty selections succeed without creating a metadata database.
++
++## Coordination and limits
++
++The receipt format, timestamp semantics, metadata flags/exit codes and writer
++lock must be documented and ported to Node/Go before claiming cross-language
++conformance. Clarify whether control-side receipt bytes belong in E5's storage
++measurement. There is intentionally no silent SPEC version bump in this draft.
++
++The receipt and SQLite are not one transaction. An interrupted storage write
++may leave artifacts without a receipt; metadata rejects that state. Existing
++reconcile still repairs the original header/body control invariant, not receipts.
++A recovery policy must be agreed before production/benchmark use. An interruption
++between SQLite and meta.json can be repaired by rerunning metadata. Receipt paths
++are validated against the selected layout, but receipts do not attest that an
++external program has not modified artifact bytes since ingestion.
++
++Validation is against a local Linux/Python environment. The user must repeat the
++suite on Windows before updating PR #81. Existing layout traversal behaviour is
++unchanged; workspaces should contain only their selected layout.
+diff --git a/src/python/cli.py b/src/python/cli.py
+index 2862581..64a92eb 100644
+--- a/src/python/cli.py
++++ b/src/python/cli.py
+@@ -8,18 +8,9 @@ reproducible from SPEC.md alone: the Node and Go ports are written from the
+ specification, never from this source, so anything decided here and not
+ written down there is a divergence waiting to happen.
+ 
+-Implemented today
+------------------
+-    version             SPEC_VERSION + build info
+-    query               issue #21 / task T24
+-    export-canonical    task T23, driven from an index already on disk
+-
+-Declared but not implemented
+-----------------------------
+-The remaining commands are listed so the surface is complete and the exit
+-codes stay honest: they fail with code 1 and name the issue that owns them,
+-rather than pretending to be absent.  Filling one in is a matter of wiring an
+-existing module into `_dispatch`.
++Implemented commands include metadata, the ingestion/index pipeline,
++query and canonical export. Metadata receipt semantics are proposed in
++docs/METADATA_INTEGRATION_PROPOSAL.md and require group review.
+ 
+ Two gaps in SPEC.md that this file had to settle
+ ------------------------------------------------
+@@ -75,16 +66,14 @@ BACKENDS = ("json", "folder", "sqlite", "mongo")
+ 
+ # Commands that exist in SPEC.md §1 but not yet in this repository, and who
+ # owns them.  Keeping them here makes `engine <cmd> --help` honest.
+-PENDING = {
+-    "metadata": "issue #4 (metadata datamart, PR #81)",
+-}
++PENDING = {}
+ 
+ # Commands that write a --metrics-out record.  `version` is not a measurement.
+-MEASURED = ("download", "split", "index", "lookup", "scan-new", "control-step",
++MEASURED = ("metadata", "download", "split", "index", "lookup", "scan-new", "control-step",
+             "reconcile", "query", "export-canonical")
+ 
+ # Commands that write to the workspace hold control/run.lock (exit 4 if taken).
+-WRITERS = ("download", "split", "index", "control-step", "reconcile")
++WRITERS = ("metadata", "download", "split", "index", "control-step", "reconcile")
+ 
+ EXIT_OK = 0
+ EXIT_ERROR = 1
+@@ -289,6 +278,12 @@ def build_parser() -> argparse.ArgumentParser:
+     ix.add_argument("--positions", action="store_true")
+     ix.add_argument("--batch-size", type=int, default=500)
+ 
++    md = sub.add_parser("metadata")
++    which = md.add_mutually_exclusive_group(required=True)
++    which.add_argument("--book-id", type=int)
++    which.add_argument("--all", action="store_true")
++    md.add_argument("--batch-size", type=int, default=500)
++
+     lk = sub.add_parser("lookup")
+     lk.add_argument("--book-id", type=int, required=True)
+ 
+@@ -322,11 +317,12 @@ def _dispatch(args, aux: dict) -> int:
+         return cmd_query(args)
+     if args.command == "export-canonical":
+         return cmd_export_canonical(args)
+-    if args.command in ("download", "split", "index", "lookup", "scan-new",
++    if args.command in ("metadata", "download", "split", "index", "lookup", "scan-new",
+                         "control-step", "reconcile"):
+         import pipeline
+ 
+         handler = {
++            "metadata": pipeline.cmd_metadata,
+             "download": pipeline.cmd_download,
+             "split": pipeline.cmd_split,
+             "index": pipeline.cmd_index,
+diff --git a/src/python/datalake/batch_storage.py b/src/python/datalake/batch_storage.py
+index 675ee9b..f17589b 100644
+--- a/src/python/datalake/batch_storage.py
++++ b/src/python/datalake/batch_storage.py
+@@ -1,6 +1,7 @@
++from .ingestion import finish_ingestion
+ import os
+ 
+-from datetime import datetime
++from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Tuple, Iterable
+ 
+@@ -8,8 +9,9 @@ from .atomic import atomic_write
+ from .base import DatalakeStorage
+ 
+ class BatchBasedStorage(DatalakeStorage):
+-    def __init__(self, workspace: Path | str):
++    def __init__(self, workspace: Path | str, now: datetime | None = None):
+         self.workspace = Path(workspace)
++        self._now = now
+         self.root = self.workspace / "datalake"
+ 
+     def _get_target_dir(self, book_id: int) -> Path:
+@@ -24,8 +26,12 @@ class BatchBasedStorage(DatalakeStorage):
+         header_path = target_dir / f"{book_id}.header.txt"
+         body_path = target_dir / f"{book_id}.body.txt"
+ 
++        timestamp = self._now or datetime.now(timezone.utc)
+         atomic_write(header_path, header)
+         atomic_write(body_path, body)
++        paths = (header_path.relative_to(self.workspace).as_posix(),
++                 body_path.relative_to(self.workspace).as_posix())
++        finish_ingestion(self.workspace, "hash", book_id, paths, timestamp)
+         
+         return(
+             header_path.relative_to(self.workspace).as_posix(),
+diff --git a/src/python/datalake/book_storage.py b/src/python/datalake/book_storage.py
+index 3dab3c8..bf6ba61 100644
+--- a/src/python/datalake/book_storage.py
++++ b/src/python/datalake/book_storage.py
+@@ -1,3 +1,4 @@
++from .ingestion import finish_ingestion
+ import os
+ from datetime import datetime, timezone
+ from pathlib import Path
+@@ -7,8 +8,9 @@ from .atomic import atomic_write
+ from .base import DatalakeStorage
+ 
+ class BookBasedStorage(DatalakeStorage):
+-    def __init__(self, workspace: Path | str):
++    def __init__(self, workspace: Path | str, now: datetime | None = None):
+         self.workspace = Path(workspace)
++        self._now = now
+         self.root = self.workspace / "datalake" / "books"
+ 
+     def write(self, book_id: int,
+@@ -18,8 +20,12 @@ class BookBasedStorage(DatalakeStorage):
+         header_path = book_dir / "header.txt"
+         body_path = book_dir / "body.txt"
+ 
++        timestamp = self._now or datetime.now(timezone.utc)
+         atomic_write(header_path, header)
+         atomic_write(body_path, body)
++        paths = (header_path.relative_to(self.workspace).as_posix(),
++                 body_path.relative_to(self.workspace).as_posix())
++        finish_ingestion(self.workspace, "book", book_id, paths, timestamp)
+ 
+         return(
+             header_path.relative_to(self.workspace).as_posix(),
+diff --git a/src/python/datalake/ingestion.py b/src/python/datalake/ingestion.py
+new file mode 100644
+index 0000000..f5be78b
+--- /dev/null
++++ b/src/python/datalake/ingestion.py
+@@ -0,0 +1,45 @@
++"""Proposed ingestion receipt contract; see docs/METADATA_INTEGRATION_PROPOSAL.md."""
++import json
++from datetime import datetime, timezone
++from pathlib import Path
++
++from .atomic import atomic_write
++from datamart.metadata import build_metadata_record
++
++
++def receipt_path(workspace, layout, book_id):
++    return Path(workspace) / "control" / "ingestion" / layout / f"{book_id}.json"
++
++
++def finish_ingestion(workspace, layout, book_id, paths, instant):
++    """Persist the instant after artifacts, before mark_downloaded is called."""
++    stamp = instant.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
++    if layout == "book":
++        record = build_metadata_record(book_id, workspace, *paths, stamp)
++        write_book_metadata(workspace, paths[1], record)
++    receipt = dict(header_path=paths[0], body_path=paths[1], ingested_at=stamp)
++    atomic_write(receipt_path(workspace, layout, book_id),
++                 json.dumps(receipt, sort_keys=True) + "\n")
++
++
++def write_book_metadata(workspace, body_path, record):
++    target = (Path(workspace) / body_path).with_name("meta.json")
++    text = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
++    # Avoid replacing an identical artifact on repeated metadata runs.
++    if not target.exists() or target.read_bytes() != text.encode("utf-8"):
++        atomic_write(target, text)
++
++
++def read_ingested_at(workspace, layout, book_id, paths):
++    path = receipt_path(workspace, layout, book_id)
++    try:
++        receipt = json.loads(path.read_text(encoding="utf-8"))
++        if (receipt["header_path"], receipt["body_path"]) != tuple(paths):
++            raise ValueError("receipt paths do not match the selected artifacts")
++        stamp = receipt["ingested_at"]
++        instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
++        if instant.tzinfo is None:
++            raise ValueError("ingestion timestamp has no timezone")
++        return instant.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
++    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
++        raise ValueError(f"book {book_id}: missing or invalid ingestion receipt: {path}") from exc
+diff --git a/src/python/datalake/time_storage.py b/src/python/datalake/time_storage.py
+index e51002c..fbe4ef2 100644
+--- a/src/python/datalake/time_storage.py
++++ b/src/python/datalake/time_storage.py
+@@ -1,3 +1,4 @@
++from .ingestion import finish_ingestion
+ import os
+ from datetime import datetime, timezone
+ from pathlib import Path
+@@ -32,6 +33,9 @@ class TimeBasedStorage(DatalakeStorage):
+ 
+         atomic_write(header_path, header)
+         atomic_write(body_path, body)
++        paths = (header_path.relative_to(self.workspace).as_posix(),
++                 body_path.relative_to(self.workspace).as_posix())
++        finish_ingestion(self.workspace, "time", book_id, paths, timestamp)
+ 
+         return (
+                 header_path.relative_to(self.workspace).as_posix(),
+diff --git a/src/python/pipeline.py b/src/python/pipeline.py
+index 60e58d6..c6b49b2 100644
+--- a/src/python/pipeline.py
++++ b/src/python/pipeline.py
+@@ -59,9 +59,9 @@ def make_storage(layout: str, workspace: Path, now: datetime | None = None):
+     if layout == "time":
+         return TimeBasedStorage(workspace, now=now)
+     if layout == "book":
+-        return BookBasedStorage(workspace)
++        return BookBasedStorage(workspace, now=now)
+     if layout == "hash":
+-        return BatchBasedStorage(workspace)
++        return BatchBasedStorage(workspace, now=now)
+     raise ValueError(f"unknown datalake layout: {layout!r}")
+ 
+ 
+@@ -409,3 +409,47 @@ def cmd_reconcile(args, aux: dict) -> int:
+           f"{len(dropped)} dropped), {len(indexed)} indexed, "
+           f"{removed_parts} partial file(s) removed", file=sys.stderr)
+     return EXIT_OK
++
++
++# --------------------------------------------------------------- metadata
++
++
++def cmd_metadata(args, aux: dict) -> int:
++    """Build metadata from stored artifacts and persisted ingestion receipts."""
++    from datamart.metadata import MetadataStore, build_metadata_record
++    from datalake.ingestion import read_ingested_at, write_book_metadata
++
++    if args.batch_size < 1:
++        print("--batch-size must be >= 1", file=sys.stderr)
++        return EXIT_USAGE
++    workspace = Path(args.workspace)
++    storage = make_storage(args.datalake_layout, workspace)
++    ids = ([args.book_id] if args.book_id is not None
++           else sorted(set(storage.list_new(EPOCH))))
++    # Validate all inputs before modifying SQLite or meta.json.
++    inputs = []
++    for book_id in ids:
++        paths = storage.lookup(book_id)
++        if paths is None:
++            print(f"book {book_id} not found in datalake", file=sys.stderr)
++            return EXIT_NOT_FOUND
++        try:
++            stamp = read_ingested_at(workspace, args.datalake_layout, book_id, paths)
++        except ValueError as exc:
++            print(str(exc), file=sys.stderr)
++            return EXIT_ERROR
++        inputs.append((book_id, paths, stamp))
++    written = 0
++    if inputs:
++        with MetadataStore(workspace) as store:
++            for start in range(0, len(inputs), args.batch_size):
++                records = [build_metadata_record(book_id, workspace, *paths, stamp)
++                           for book_id, paths, stamp in inputs[start:start + args.batch_size]]
++                written += store.upsert(records, batch_size=args.batch_size)
++                if args.datalake_layout == "book":
++                    for record in records:
++                        write_book_metadata(workspace, record["body_path"], record)
++    aux.update(docs_processed=len(inputs), docs_written=written,
++               docs_skipped=len(inputs) - written)
++    print(f"metadata: processed {len(inputs)}, written {written}", file=sys.stderr)
++    return EXIT_OK
+diff --git a/src/python/test_cli.py b/src/python/test_cli.py
+index eb55a53..34279d3 100644
+--- a/src/python/test_cli.py
++++ b/src/python/test_cli.py
+@@ -211,10 +211,10 @@ def test_unreadable_spec_version_is_detected(tmp_path):
+     assert "cannot read" in check_spec_version(tmp_path / "missing")
+ 
+ 
+-def test_unimplemented_command_names_its_issue(tmp_path):
++def test_metadata_requires_a_selection(tmp_path):
+     proc = subprocess.run(
+         [sys.executable, str(CLI), "--workspace", str(tmp_path), "metadata"],
+         capture_output=True, text=True, check=False,
+     )
+-    assert proc.returncode == 1
+-    assert "issue #" in proc.stderr
++    assert proc.returncode == 2
++    assert "required" in proc.stderr
+diff --git a/src/python/test_metadata_pipeline.py b/src/python/test_metadata_pipeline.py
+new file mode 100644
+index 0000000..3555b0b
+--- /dev/null
++++ b/src/python/test_metadata_pipeline.py
+@@ -0,0 +1,106 @@
++"""Integration checks for the proposed persisted ingestion contract."""
++import hashlib
++import json
++import sys
++from pathlib import Path
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++import cli
++from pipeline import make_storage, parse_now
++from datamart.metadata import MetadataStore
++from control_layer import WorkspaceLock
++
++STAMP = "2026-01-01T07:30:11Z"
++
++
++def run(ws, layout, *args):
++    return cli.main(["--workspace", str(ws), "--datalake-layout", layout, *args])
++
++
++@pytest.mark.parametrize("layout", ["book", "hash", "time"])
++def test_metadata_roundtrip_and_idempotency(tmp_path, layout):
++    storage = make_storage(layout, tmp_path, parse_now(STAMP))
++    header, body = storage.write(42, "Title: Café\nLanguage: English\n", "café\n")
++    metrics = tmp_path / "metrics.jsonl"
++    assert run(tmp_path, layout, "--metrics-out", str(metrics), "metadata", "--all", "--batch-size", "1") == 0
++    with MetadataStore(tmp_path) as db:
++        record = db.by_id(42)
++    assert record["ingested_at"] == STAMP
++    assert record["language"] == "en"
++    assert record["body_bytes"] == len("café\n".encode())
++    assert record["sha256"] == hashlib.sha256("café\n".encode()).hexdigest()
++    assert record["header_path"] == header and record["body_path"] == body
++    meta = (tmp_path / body).with_name("meta.json")
++    if layout == "book":
++        assert json.loads(meta.read_text()) == record
++        before = meta.stat().st_mtime_ns
++    assert run(tmp_path, layout, "--metrics-out", str(metrics), "metadata", "--book-id", "42") == 0
++    records = [json.loads(line) for line in metrics.read_text().splitlines()]
++    assert records[0]["aux"]["docs_written"] == 1
++    assert records[1]["aux"]["docs_written"] == 0
++    if layout == "book":
++        assert meta.stat().st_mtime_ns == before
++
++
++def test_book_metadata_exists_before_metadata_command(tmp_path):
++    storage = make_storage("book", tmp_path, parse_now(STAMP))
++    storage.write(7, "Title: Test\n", "body\n")
++    assert json.loads((tmp_path / "datalake/books/7/meta.json").read_text())["ingested_at"] == STAMP
++
++
++def test_legacy_workspace_requires_receipt(tmp_path):
++    folder = tmp_path / "datalake/books/7"
++    folder.mkdir(parents=True)
++    (folder / "header.txt").write_text("Title: Test\n")
++    (folder / "body.txt").write_text("body\n")
++    assert run(tmp_path, "book", "metadata", "--all") == 1
++    assert not (tmp_path / "datamarts/metadata.db").exists()
++
++
++def test_missing_book(tmp_path):
++    assert run(tmp_path, "book", "metadata", "--book-id", "7") == 3
++
++
++def test_empty_workspace(tmp_path):
++    assert run(tmp_path, "book", "metadata", "--all") == 0
++    assert not (tmp_path / "datamarts/metadata.db").exists()
++
++
++def test_invalid_batch(tmp_path):
++    assert run(tmp_path, "book", "metadata", "--all", "--batch-size", "0") == 2
++
++
++def test_metadata_respects_writer_lock(tmp_path):
++    with WorkspaceLock(tmp_path):
++        assert run(tmp_path, "book", "metadata", "--all") == 4
++
++
++def test_split_creates_receipt_and_book_metadata(tmp_path):
++    raw = tmp_path / "raw/7.txt"
++    raw.parent.mkdir()
++    raw.write_text("Title: Test\n*** START OF THE PROJECT GUTENBERG EBOOK\nbody\n*** END OF THE PROJECT GUTENBERG EBOOK\n")
++    assert run(tmp_path, "book", "--now", STAMP, "split", "--book-id", "7") == 0
++    assert run(tmp_path, "book", "metadata", "--book-id", "7") == 0
++    with MetadataStore(tmp_path) as db:
++        assert db.by_id(7)["ingested_at"] == STAMP
++
++
++@pytest.mark.parametrize("payload", ['{', '{"header_path":"wrong","body_path":"wrong","ingested_at":"bad"}'])
++def test_invalid_receipt_fails_before_database_creation(tmp_path, payload):
++    from datalake.ingestion import receipt_path
++    make_storage("book", tmp_path, parse_now(STAMP)).write(7, "Title: Test\n", "body\n")
++    receipt_path(tmp_path, "book", 7).write_text(payload)
++    assert run(tmp_path, "book", "metadata", "--all") == 1
++    assert not (tmp_path / "datamarts/metadata.db").exists()
++
++
++def test_book_json_repaired_without_replacing_database_record(tmp_path):
++    make_storage("book", tmp_path, parse_now(STAMP)).write(7, "Title: Test\n", "body\n")
++    assert run(tmp_path, "book", "metadata", "--all") == 0
++    meta = tmp_path / "datalake/books/7/meta.json"
++    meta.unlink()
++    assert run(tmp_path, "book", "metadata", "--all") == 0
++    with MetadataStore(tmp_path) as db:
++        assert json.loads(meta.read_text()) == db.by_id(7)

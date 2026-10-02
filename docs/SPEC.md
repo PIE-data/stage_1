@@ -298,14 +298,15 @@ Paths are stored **relative to the workspace root**. Absolute paths would break 
 
 ### 5.2 Header parsing rules
 
-The header is a sequence of `Field: value` lines, possibly with continuation lines indented by whitespace.
+The header is a sequence of `Field: value` lines.
 
-- Field matching is **case-insensitive** on the field name, anchored at line start.
-- A line that starts with whitespace and follows a recognised field is a **continuation**: append it to the previous value separated by a single space. **Exception:** `Release date` is single-line — Gutenberg indents auxiliary lines under it (`Most recently updated: …`), so an indented line after `Release date` is ignored and ends that field.
+- A field starts **only at column 0** with a name from the **known list**, case-insensitive: `Title`, `Author`, `Editor`, `Illustrator`, `Translator`, `Release date`, `Language`, `Credits`.
+- **Continuation:** Blank lines do **NOT** end a field. An indented non-empty line continues the current field (joined with a single space). The field ends at the next non-empty line at column 0.
+- **Exception:** `Release date` is single-line. Nothing is ever appended to it; its indented auxiliary lines (e.g., `Most recently updated: …`) are ignored.
 - `Title` → `title`. Required; if absent, `title = "Unknown"` and a `MISSING_TITLE` warning is logged.
-- `Author` → `author`. If absent, `null`. Strip a trailing `, <years>` life-span suffix (e.g. `Austen, Jane, 1775-1817`). Names in `Surname, Given` form are **kept verbatim**; normalising them is a Stage 2 concern and would diverge across implementations.
+- `Author` → `author`. If absent, `null`. Strip the trailing `, <year>-<year>` life-span suffix only when present (95% have none). Names in `Surname, Given` form are **kept verbatim**; normalising them is a Stage 2 concern and would diverge across implementations.
 - `Language` → `language`, mapped to ISO 639-1 via `spec/language_map.txt`; unmapped values are stored lowercased as-is.
-- `Release date` / `Release Date` → `release_date`, parsed from Gutenberg's `Month DD, YYYY` form to `YYYY-MM-DD`; if unparseable, `null`. Month names are matched against a **committed English month table**, never a locale-dependent date parser.
+- `Release date` / `Release Date` → `release_date`, parsed from Gutenberg's `Month DD, YYYY [eBook #<id>]` form to `YYYY-MM-DD`; if unparseable, `null`. It always ends with `[eBook #<id>]` and must still parse. Month names are matched against a **committed English month table**, never a locale-dependent date parser.
 - All values: collapse internal whitespace runs to a single space, then trim.
 
 ### 5.3 SQLite schema
@@ -436,7 +437,7 @@ One JSON object per line, appended to `--metrics-out`:
 ```json
 {
   "run_id":        "2026-10-02T09-14-22Z-a3f9",
-  "spec_version":  "1.1.8",
+  "spec_version":  "1.1.9",
   "language":      "python",
   "impl_version":  "git:7f3c1ab",
   "experiment":    "E8_index_build",
