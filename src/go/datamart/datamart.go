@@ -106,6 +106,12 @@ func ParseHeader(header string, langMap map[string]string) map[string]string {
 	
 	lines := strings.Split(header, "\n")
 	for _, line := range lines {
+		// Blank lines do not end a field (SPEC §5.2, 1.1.9): Gutenberg ends
+		// lines with \r\r\n, so after decoding every header line is followed
+		// by an empty one, and a wrapped Title/Author continues after it.
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
 		if (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) && currentField != "" {
 			if currentField == "release_date" {
 				currentField = ""
