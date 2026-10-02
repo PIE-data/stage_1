@@ -13,7 +13,7 @@ import (
 	"engine/control"
 )
 
-const SupportedSpecVersion = "1.1.8"
+const SupportedSpecVersion = "1.1.9"
 
 func findSpecVersion() (string, error) {
 	dir, err := os.Getwd()
