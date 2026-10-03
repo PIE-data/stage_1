@@ -1,0 +1,5 @@
+experiment,metric,unit,language,layout,backend,corpus_size,workers,n,median,q1,q3,iqr,min,max,median_peak_rss_mib,cache
+E6,wall_time,ms,go,hash,folder,100,,3,523461.88,520677.257,523538.878,2861.621,517892.633,523615.875,194.7,cold
+E6,wall_time_internal,ms,go,hash,folder,100,,3,523417.089,520623.084,523482.722,2859.638,517829.079,523548.355,194.7,cold
+E8,wall_time,ms,go,hash,folder,100,,3,618559.33,615325.838,618846.638,3520.8,612092.346,619133.946,241.9,cold
+E8,wall_time_internal,ms,go,hash,folder,100,,3,618496.857,615264.699,618783.851,3519.152,612032.541,619070.846,241.9,cold

@@ -1,0 +1,16 @@
+[RUNNER] work dir /home/andrea/bench/work, 1005 GB free (inside WSL this is the virtual disk's limit; check the host drive too)
+=== E6 ===
+[RUNNER] E6 python hash folder n=100  rep 1  619522.8 ms  (inside 619305.6 ms)  rss 277 MiB
+[RUNNER] E6 python hash folder n=100  rep 2  583934.8 ms  (inside 583714.9 ms)  rss 277 MiB
+[RUNNER] E6 python hash folder n=100  rep 3  584790.2 ms  (inside 583482.5 ms)  rss 277 MiB
+[RUNNER] E6 node hash folder n=100  rep 1 3084948.9 ms  (inside 3084494.3 ms)  rss 185 MiB
+[RUNNER] E6 node hash folder n=100  rep 2 3080271.7 ms  (inside 3079880.3 ms)  rss 176 MiB
+[RUNNER] E6 node hash folder n=100  rep 3 3088250.8 ms  (inside 3087853.2 ms)  rss 188 MiB
+=== E8 ===
+[RUNNER] E8 python hash folder n=100  rep 1  674671.6 ms  (inside 674476.8 ms)  rss 321 MiB
+[RUNNER] E8 python hash folder n=100  rep 2  672293.1 ms  (inside 672106.1 ms)  rss 320 MiB
+[RUNNER] E8 python hash folder n=100  rep 3  668715.8 ms  (inside 668469.1 ms)  rss 320 MiB
+[RUNNER] E8 node hash folder n=100  rep 1 2108526.7 ms  (inside 2108072.0 ms)  rss 423 MiB
+[RUNNER] E8 node hash folder n=100  rep 2 2114116.2 ms  (inside 2113647.0 ms)  rss 645 MiB
+[RUNNER] E8 node hash folder n=100  rep 3 2101254.2 ms  (inside 2100785.0 ms)  rss 443 MiB
+[RUNNER] summary -> /home/andrea/bench/stage_1/results/t100-folder/summary.csv

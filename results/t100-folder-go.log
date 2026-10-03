@@ -1,0 +1,10 @@
+[RUNNER] work dir /home/andrea/bench/work, 999 GB free (inside WSL this is the virtual disk's limit; check the host drive too)
+=== E6 ===
+[RUNNER] E6 go hash folder n=100  rep 1  523461.9 ms  (inside 523417.1 ms)  rss 222 MiB
+[RUNNER] E6 go hash folder n=100  rep 2  517892.6 ms  (inside 517829.1 ms)  rss 194 MiB
+[RUNNER] E6 go hash folder n=100  rep 3  523615.9 ms  (inside 523548.4 ms)  rss 174 MiB
+=== E8 ===
+[RUNNER] E8 go hash folder n=100  rep 1  619133.9 ms  (inside 619070.8 ms)  rss 290 MiB
+[RUNNER] E8 go hash folder n=100  rep 2  618559.3 ms  (inside 618496.9 ms)  rss 241 MiB
+[RUNNER] E8 go hash folder n=100  rep 3  612092.3 ms  (inside 612032.5 ms)  rss 241 MiB
+[RUNNER] summary -> /home/andrea/bench/stage_1/results/t100-folder-go/summary.csv

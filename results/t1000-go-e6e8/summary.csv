@@ -1,0 +1,9 @@
+experiment,metric,unit,language,layout,backend,corpus_size,workers,n,median,q1,q3,iqr,min,max,median_peak_rss_mib,cache
+E6,wall_time,ms,go,hash,json,1000,,3,29369.855,29200.875,29883.395,682.52,29031.895,30396.936,2254.2,cold
+E6,wall_time,ms,go,hash,sqlite,1000,,3,97490.977,97460.759,98394.86,934.101,97430.541,99298.743,1418.6,cold
+E6,wall_time_internal,ms,go,hash,json,1000,,3,29258.149,29087.458,29766.02,678.562,28916.767,30273.891,2254.2,cold
+E6,wall_time_internal,ms,go,hash,sqlite,1000,,3,97406.373,97376.649,98247.375,870.726,97346.925,99088.376,1418.6,cold
+E8,wall_time,ms,go,hash,json,1000,,3,8577.614,8405.609,8595.32,189.711,8233.604,8613.026,1999.0,cold
+E8,wall_time,ms,go,hash,sqlite,1000,,3,19258.862,19160.744,19580.371,419.627,19062.626,19901.879,661.4,cold
+E8,wall_time_internal,ms,go,hash,json,1000,,3,8454.175,8278.581,8471.056,192.476,8102.986,8487.938,1999.0,cold
+E8,wall_time_internal,ms,go,hash,sqlite,1000,,3,19191.902,19096.929,19487.374,390.446,19001.955,19782.847,661.4,cold
