@@ -1,0 +1,185 @@
+[RUNNER] work dir /home/andrea/bench/work, 999 GB free (inside WSL this is the virtual disk's limit; check the host drive too)
+=== E12 ===
+[RUNNER] E12 python time - n=100 b=1  warm-up     297.9 ms
+[RUNNER] E12 python time - n=100 b=1  rep 1     484.3 ms  (inside 254.6 ms)  rss 27 MiB
+[RUNNER] E12 python time - n=100 b=1  rep 2     397.1 ms  (inside 250.6 ms)  rss 27 MiB
+[RUNNER] E12 python time - n=100 b=1  rep 3     408.4 ms  (inside 243.4 ms)  rss 27 MiB
+[RUNNER] E12 python time - n=100 b=500  warm-up     167.5 ms
+[RUNNER] E12 python time - n=100 b=500  rep 1     426.3 ms  (inside 241.4 ms)  rss 27 MiB
+[RUNNER] E12 python time - n=100 b=500  rep 2     395.1 ms  (inside 231.0 ms)  rss 27 MiB
+[RUNNER] E12 python time - n=100 b=500  rep 3     353.0 ms  (inside 203.6 ms)  rss 27 MiB
+[RUNNER] E12 node time - n=100 b=1  warm-up     533.5 ms
+[RUNNER] E12 node time - n=100 b=1  rep 1     587.0 ms  (inside 193.3 ms)  rss 97 MiB
+[RUNNER] E12 node time - n=100 b=1  rep 2     554.2 ms  (inside 191.5 ms)  rss 95 MiB
+[RUNNER] E12 node time - n=100 b=1  rep 3     560.8 ms  (inside 185.3 ms)  rss 96 MiB
+[RUNNER] E12 node time - n=100 b=500  warm-up     197.5 ms
+[RUNNER] E12 node time - n=100 b=500  rep 1     617.1 ms  (inside 212.4 ms)  rss 96 MiB
+[RUNNER] E12 node time - n=100 b=500  rep 2     532.0 ms  (inside 180.5 ms)  rss 96 MiB
+[RUNNER] E12 node time - n=100 b=500  rep 3     523.1 ms  (inside 164.9 ms)  rss 96 MiB
+[RUNNER] E12 go time - n=100 b=1  warm-up     120.0 ms
+[RUNNER] E12 go time - n=100 b=1  rep 1     293.2 ms  (inside 242.0 ms)  rss 20 MiB
+[RUNNER] E12 go time - n=100 b=1  rep 2     254.0 ms  (inside 220.2 ms)  rss 21 MiB
+[RUNNER] E12 go time - n=100 b=1  rep 3     260.7 ms  (inside 220.2 ms)  rss 20 MiB
+[RUNNER] E12 go time - n=100 b=500  warm-up      96.3 ms
+[RUNNER] E12 go time - n=100 b=500  rep 1     240.2 ms  (inside 200.6 ms)  rss 18 MiB
+[RUNNER] E12 go time - n=100 b=500  rep 2     216.0 ms  (inside 181.4 ms)  rss 19 MiB
+[RUNNER] E12 go time - n=100 b=500  rep 3     219.1 ms  (inside 184.5 ms)  rss 19 MiB
+[RUNNER] E12 time n=100: identical metadata rows in go, node, python
+[RUNNER] E12 python book - n=100 b=1  warm-up     207.9 ms
+[RUNNER] E12 python book - n=100 b=1  rep 1     435.8 ms  (inside 257.1 ms)  rss 27 MiB
+[RUNNER] E12 python book - n=100 b=1  rep 2     361.9 ms  (inside 214.4 ms)  rss 27 MiB
+[RUNNER] E12 python book - n=100 b=1  rep 3     339.8 ms  (inside 201.5 ms)  rss 27 MiB
+[RUNNER] E12 python book - n=100 b=500  warm-up     150.5 ms
+[RUNNER] E12 python book - n=100 b=500  rep 1     374.0 ms  (inside 214.3 ms)  rss 27 MiB
+[RUNNER] E12 python book - n=100 b=500  rep 2     340.6 ms  (inside 200.4 ms)  rss 27 MiB
+[RUNNER] E12 python book - n=100 b=500  rep 3     330.8 ms  (inside 190.6 ms)  rss 27 MiB
+[RUNNER] E12 node book - n=100 b=1  warm-up     457.9 ms
+[RUNNER] E12 node book - n=100 b=1  rep 1     608.3 ms  (inside 217.6 ms)  rss 103 MiB
+[RUNNER] E12 node book - n=100 b=1  rep 2     568.0 ms  (inside 198.0 ms)  rss 106 MiB
+[RUNNER] E12 node book - n=100 b=1  rep 3     566.9 ms  (inside 193.6 ms)  rss 108 MiB
+[RUNNER] E12 node book - n=100 b=500  warm-up     205.4 ms
+[RUNNER] E12 node book - n=100 b=500  rep 1     565.4 ms  (inside 195.0 ms)  rss 95 MiB
+[RUNNER] E12 node book - n=100 b=500  rep 2     552.8 ms  (inside 187.0 ms)  rss 102 MiB
+[RUNNER] E12 node book - n=100 b=500  rep 3     550.2 ms  (inside 193.7 ms)  rss 100 MiB
+[RUNNER] E12 go book - n=100 b=1  warm-up     142.0 ms
+[RUNNER] E12 go book - n=100 b=1  rep 1     268.3 ms  (inside 218.6 ms)  rss 19 MiB
+[RUNNER] E12 go book - n=100 b=1  rep 2     254.1 ms  (inside 217.8 ms)  rss 19 MiB
+[RUNNER] E12 go book - n=100 b=1  rep 3     238.6 ms  (inside 204.3 ms)  rss 19 MiB
+[RUNNER] E12 go book - n=100 b=500  warm-up     103.7 ms
+[RUNNER] E12 go book - n=100 b=500  rep 1     238.9 ms  (inside 190.0 ms)  rss 19 MiB
+[RUNNER] E12 go book - n=100 b=500  rep 2     224.9 ms  (inside 188.9 ms)  rss 18 MiB
+[RUNNER] E12 go book - n=100 b=500  rep 3     207.0 ms  (inside 175.7 ms)  rss 18 MiB
+[RUNNER] E12 book n=100: identical metadata rows in go, node, python
+[RUNNER] E12 python hash - n=100 b=1  warm-up     237.7 ms
+[RUNNER] E12 python hash - n=100 b=1  rep 1     379.8 ms  (inside 212.8 ms)  rss 27 MiB
+[RUNNER] E12 python hash - n=100 b=1  rep 2     333.6 ms  (inside 187.0 ms)  rss 27 MiB
+[RUNNER] E12 python hash - n=100 b=1  rep 3     322.1 ms  (inside 179.3 ms)  rss 27 MiB
+[RUNNER] E12 python hash - n=100 b=500  warm-up     138.3 ms
+[RUNNER] E12 python hash - n=100 b=500  rep 1     375.4 ms  (inside 201.0 ms)  rss 27 MiB
+[RUNNER] E12 python hash - n=100 b=500  rep 2     325.6 ms  (inside 176.7 ms)  rss 27 MiB
+[RUNNER] E12 python hash - n=100 b=500  rep 3     321.6 ms  (inside 182.4 ms)  rss 27 MiB
+[RUNNER] E12 node hash - n=100 b=1  warm-up     475.5 ms
+[RUNNER] E12 node hash - n=100 b=1  rep 1     559.1 ms  (inside 193.9 ms)  rss 106 MiB
+[RUNNER] E12 node hash - n=100 b=1  rep 2     565.2 ms  (inside 189.3 ms)  rss 108 MiB
+[RUNNER] E12 node hash - n=100 b=1  rep 3     607.7 ms  (inside 193.6 ms)  rss 109 MiB
+[RUNNER] E12 node hash - n=100 b=500  warm-up     219.8 ms
+[RUNNER] E12 node hash - n=100 b=500  rep 1     612.7 ms  (inside 200.8 ms)  rss 108 MiB
+[RUNNER] E12 node hash - n=100 b=500  rep 2     578.6 ms  (inside 182.8 ms)  rss 107 MiB
+[RUNNER] E12 node hash - n=100 b=500  rep 3     573.9 ms  (inside 185.5 ms)  rss 107 MiB
+[RUNNER] E12 go hash - n=100 b=1  warm-up     148.2 ms
+[RUNNER] E12 go hash - n=100 b=1  rep 1     271.0 ms  (inside 220.2 ms)  rss 19 MiB
+[RUNNER] E12 go hash - n=100 b=1  rep 2    1112.6 ms  (inside 920.8 ms)  rss 21 MiB
+[RUNNER] E12 go hash - n=100 b=1  rep 3    1017.1 ms  (inside 925.4 ms)  rss 19 MiB
+[RUNNER] E12 go hash - n=100 b=500  warm-up      99.6 ms
+[RUNNER] E12 go hash - n=100 b=500  rep 1     243.5 ms  (inside 193.4 ms)  rss 18 MiB
+[RUNNER] E12 go hash - n=100 b=500  rep 2     225.3 ms  (inside 188.3 ms)  rss 18 MiB
+[RUNNER] E12 go hash - n=100 b=500  rep 3     229.8 ms  (inside 191.4 ms)  rss 19 MiB
+[RUNNER] E12 hash n=100: identical metadata rows in go, node, python
+[RUNNER] E12 python time - n=1000 b=1  warm-up    1171.1 ms
+[RUNNER] E12 python time - n=1000 b=1  rep 1    2550.8 ms  (inside 2346.8 ms)  rss 28 MiB
+[RUNNER] E12 python time - n=1000 b=1  rep 2    2750.1 ms  (inside 2548.8 ms)  rss 28 MiB
+[RUNNER] E12 python time - n=1000 b=1  rep 3    2606.6 ms  (inside 2413.6 ms)  rss 28 MiB
+[RUNNER] E12 python time - n=1000 b=500  warm-up    1049.8 ms
+[RUNNER] E12 python time - n=1000 b=500  rep 1    2241.9 ms  (inside 2046.9 ms)  rss 29 MiB
+[RUNNER] E12 python time - n=1000 b=500  rep 2    2289.2 ms  (inside 2098.1 ms)  rss 29 MiB
+[RUNNER] E12 python time - n=1000 b=500  rep 3    2258.4 ms  (inside 2058.9 ms)  rss 29 MiB
+[RUNNER] E12 node time - n=1000 b=1  warm-up    1093.3 ms
+[RUNNER] E12 node time - n=1000 b=1  rep 1    2193.1 ms  (inside 1733.5 ms)  rss 117 MiB
+[RUNNER] E12 node time - n=1000 b=1  rep 2    4772.9 ms  (inside 3532.0 ms)  rss 119 MiB
+[RUNNER] E12 node time - n=1000 b=1  rep 3    2201.2 ms  (inside 1726.1 ms)  rss 119 MiB
+[RUNNER] E12 node time - n=1000 b=500  warm-up     683.9 ms
+[RUNNER] E12 node time - n=1000 b=500  rep 1    2019.3 ms  (inside 1577.1 ms)  rss 123 MiB
+[RUNNER] E12 node time - n=1000 b=500  rep 2    1976.3 ms  (inside 1529.9 ms)  rss 120 MiB
+[RUNNER] E12 node time - n=1000 b=500  rep 3    1960.0 ms  (inside 1531.2 ms)  rss 116 MiB
+[RUNNER] E12 go time - n=1000 b=1  warm-up    1636.5 ms
+[RUNNER] E12 go time - n=1000 b=1  rep 1    5257.6 ms  (inside 5204.6 ms)  rss 33 MiB
+[RUNNER] E12 go time - n=1000 b=1  rep 2    2964.9 ms  (inside 2910.9 ms)  rss 33 MiB
+[RUNNER] E12 go time - n=1000 b=1  rep 3    2953.8 ms  (inside 2900.7 ms)  rss 33 MiB
+[RUNNER] E12 go time - n=1000 b=500  warm-up    1301.7 ms
+[RUNNER] E12 go time - n=1000 b=500  rep 1    2507.6 ms  (inside 2456.9 ms)  rss 28 MiB
+[RUNNER] E12 go time - n=1000 b=500  rep 2    2520.8 ms  (inside 2468.0 ms)  rss 32 MiB
+[RUNNER] E12 go time - n=1000 b=500  rep 3    2556.3 ms  (inside 2492.3 ms)  rss 32 MiB
+[RUNNER] E12 time n=1000: identical metadata rows in go, node, python
+[RUNNER] E12 python book - n=1000 b=1  warm-up    1321.5 ms
+[RUNNER] E12 python book - n=1000 b=1  rep 1    2277.5 ms  (inside 2119.6 ms)  rss 28 MiB
+[RUNNER] E12 python book - n=1000 b=1  rep 2    2491.0 ms  (inside 2290.0 ms)  rss 28 MiB
+[RUNNER] E12 python book - n=1000 b=1  rep 3    2515.2 ms  (inside 2329.0 ms)  rss 28 MiB
+[RUNNER] E12 python book - n=1000 b=500  warm-up    1068.7 ms
+[RUNNER] E12 python book - n=1000 b=500  rep 1    2165.7 ms  (inside 1980.3 ms)  rss 29 MiB
+[RUNNER] E12 python book - n=1000 b=500  rep 2    2276.6 ms  (inside 2068.1 ms)  rss 29 MiB
+[RUNNER] E12 python book - n=1000 b=500  rep 3    2245.5 ms  (inside 2050.0 ms)  rss 29 MiB
+[RUNNER] E12 node book - n=1000 b=1  warm-up    1449.0 ms
+[RUNNER] E12 node book - n=1000 b=1  rep 1    2464.1 ms  (inside 2039.4 ms)  rss 119 MiB
+[RUNNER] E12 node book - n=1000 b=1  rep 2    2601.7 ms  (inside 2179.9 ms)  rss 117 MiB
+[RUNNER] E12 node book - n=1000 b=1  rep 3    2524.5 ms  (inside 2090.1 ms)  rss 119 MiB
+[RUNNER] E12 node book - n=1000 b=500  warm-up    1132.5 ms
+[RUNNER] E12 node book - n=1000 b=500  rep 1    2268.4 ms  (inside 1840.6 ms)  rss 117 MiB
+[RUNNER] E12 node book - n=1000 b=500  rep 2    2635.9 ms  (inside 2170.4 ms)  rss 120 MiB
+[RUNNER] E12 node book - n=1000 b=500  rep 3    2340.2 ms  (inside 1950.6 ms)  rss 118 MiB
+[RUNNER] E12 go book - n=1000 b=1  warm-up    1519.7 ms
+[RUNNER] E12 go book - n=1000 b=1  rep 1    2583.0 ms  (inside 2532.7 ms)  rss 32 MiB
+[RUNNER] E12 go book - n=1000 b=1  rep 2    5833.2 ms  (inside 5661.6 ms)  rss 32 MiB
+[RUNNER] E12 go book - n=1000 b=1  rep 3    2932.6 ms  (inside 2881.7 ms)  rss 34 MiB
+[RUNNER] E12 go book - n=1000 b=500  warm-up    1217.3 ms
+[RUNNER] E12 go book - n=1000 b=500  rep 1    2249.5 ms  (inside 2198.3 ms)  rss 30 MiB
+[RUNNER] E12 go book - n=1000 b=500  rep 2    2291.6 ms  (inside 2238.9 ms)  rss 33 MiB
+[RUNNER] E12 go book - n=1000 b=500  rep 3    2364.2 ms  (inside 2309.4 ms)  rss 33 MiB
+[RUNNER] E12 book n=1000: identical metadata rows in go, node, python
+[RUNNER] E12 python hash - n=1000 b=1  warm-up     840.1 ms
+[RUNNER] E12 python hash - n=1000 b=1  rep 1    1931.4 ms  (inside 1731.4 ms)  rss 28 MiB
+[RUNNER] E12 python hash - n=1000 b=1  rep 2    1800.6 ms  (inside 1600.9 ms)  rss 28 MiB
+[RUNNER] E12 python hash - n=1000 b=1  rep 3    1987.5 ms  (inside 1749.9 ms)  rss 28 MiB
+[RUNNER] E12 python hash - n=1000 b=500  warm-up     651.8 ms
+[RUNNER] E12 python hash - n=1000 b=500  rep 1    3191.0 ms  (inside 2661.3 ms)  rss 29 MiB
+[RUNNER] E12 python hash - n=1000 b=500  rep 2    1751.1 ms  (inside 1563.2 ms)  rss 29 MiB
+[RUNNER] E12 python hash - n=1000 b=500  rep 3    1700.5 ms  (inside 1521.2 ms)  rss 29 MiB
+[RUNNER] E12 node hash - n=1000 b=1  warm-up    1026.9 ms
+[RUNNER] E12 node hash - n=1000 b=1  rep 1    1999.2 ms  (inside 1545.2 ms)  rss 120 MiB
+[RUNNER] E12 node hash - n=1000 b=1  rep 2    2058.9 ms  (inside 1622.7 ms)  rss 118 MiB
+[RUNNER] E12 node hash - n=1000 b=1  rep 3    2020.8 ms  (inside 1580.5 ms)  rss 118 MiB
+[RUNNER] E12 node hash - n=1000 b=500  warm-up     637.3 ms
+[RUNNER] E12 node hash - n=1000 b=500  rep 1    1947.6 ms  (inside 1485.4 ms)  rss 118 MiB
+[RUNNER] E12 node hash - n=1000 b=500  rep 2    1896.9 ms  (inside 1456.8 ms)  rss 118 MiB
+[RUNNER] E12 node hash - n=1000 b=500  rep 3    1893.7 ms  (inside 1451.6 ms)  rss 120 MiB
+[RUNNER] E12 go hash - n=1000 b=1  warm-up    1200.5 ms
+[RUNNER] E12 go hash - n=1000 b=1  rep 1    2038.2 ms  (inside 1984.4 ms)  rss 32 MiB
+[RUNNER] E12 go hash - n=1000 b=1  rep 2    2176.1 ms  (inside 2120.1 ms)  rss 34 MiB
+[RUNNER] E12 go hash - n=1000 b=1  rep 3    2071.2 ms  (inside 2030.8 ms)  rss 33 MiB
+[RUNNER] E12 go hash - n=1000 b=500  warm-up     846.5 ms
+[RUNNER] E12 go hash - n=1000 b=500  rep 1    1810.1 ms  (inside 1755.4 ms)  rss 32 MiB
+[RUNNER] E12 go hash - n=1000 b=500  rep 2    1786.5 ms  (inside 1731.1 ms)  rss 33 MiB
+[RUNNER] E12 go hash - n=1000 b=500  rep 3    1907.6 ms  (inside 1851.1 ms)  rss 30 MiB
+[RUNNER] E12 hash n=1000: identical metadata rows in go, node, python
+[RUNNER] summary -> /home/andrea/bench/stage_1/results/t-meta/summary.csv
+.....                                                                    [100%]
+
+-------------------------------------------------------------------------------------------- benchmark: 5 tests -------------------------------------------------------------------------------------------
+Name (time in us)                          Min                 Max              Mean             StdDev            Median               IQR            Outliers  OPS (Kops/s)            Rounds  Iterations
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+test_bench_metadata_query[Q2]           1.4800 (1.0)       39.8630 (1.43)     2.0294 (1.0)       2.2355 (1.39)     1.8170 (1.0)      0.2805 (1.80)         6;30      492.7482 (1.0)         500           1
+test_bench_metadata_query[Q3_range]     2.1860 (1.48)     236.8900 (8.52)     3.3450 (1.65)     11.1654 (6.95)     2.3665 (1.30)     0.3540 (2.28)         4;69      298.9497 (0.61)        500           1
+test_bench_metadata_query[Q1]           2.3090 (1.56)      64.7490 (2.33)     2.9015 (1.43)      3.3933 (2.11)     2.4730 (1.36)     0.1555 (1.0)          2;81      344.6482 (0.70)        500           1
+test_bench_metadata_query[Q4]           5.5400 (3.74)      27.7920 (1.0)      6.1817 (3.05)      1.6062 (1.0)      5.9220 (3.26)     0.5235 (3.37)          4;5      161.7688 (0.33)        200           1
+test_bench_metadata_query[Q3]           5.8470 (3.95)      55.8670 (2.01)     6.6846 (3.29)      2.6886 (1.67)     6.1920 (3.41)     0.8170 (5.25)         7;19      149.5975 (0.30)        500           1
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Legend:
+  Outliers: 1 Standard Deviation from Mean; 1.5 IQR (InterQuartile Range) from 1st Quartile and 3rd Quartile.
+  OPS: Operations Per Second, computed as 1 / Mean
+5 passed in 7.61s
+.....                                                                    [100%]
+
+--------------------------------------------------------------------------------------------- benchmark: 5 tests ---------------------------------------------------------------------------------------------
+Name (time in us)                           Min                 Max               Mean             StdDev             Median               IQR            Outliers  OPS (Kops/s)            Rounds  Iterations
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+test_bench_metadata_query[Q2]            2.0050 (1.0)       65.6550 (2.73)      2.3255 (1.0)       2.8521 (2.56)      2.1470 (1.0)      0.0990 (1.0)          2;40      430.0221 (1.0)         500           1
+test_bench_metadata_query[Q1]            3.5780 (1.78)      24.0860 (1.0)       4.1184 (1.77)      1.1123 (1.0)       3.8660 (1.80)     0.2075 (2.10)        26;72      242.8149 (0.56)        500           1
+test_bench_metadata_query[Q3_range]      3.7670 (1.88)      44.4140 (1.84)      4.3569 (1.87)      2.0108 (1.81)      4.0650 (1.89)     0.2060 (2.08)        18;59      229.5203 (0.53)        500           1
+test_bench_metadata_query[Q4]           30.2500 (15.09)     96.8590 (4.02)     33.9074 (14.58)     6.5596 (5.90)     32.3155 (15.05)    1.4225 (14.37)       11;29       29.4921 (0.07)        200           1
+test_bench_metadata_query[Q3]           47.2870 (23.58)    277.9920 (11.54)    52.3837 (22.53)    14.3051 (12.86)    49.3700 (22.99)    3.8475 (38.86)       14;30       19.0899 (0.04)        500           1
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Legend:
+  Outliers: 1 Standard Deviation from Mean; 1.5 IQR (InterQuartile Range) from 1st Quartile and 3rd Quartile.
+  OPS: Operations Per Second, computed as 1 / Mean
+5 passed in 1.79s
