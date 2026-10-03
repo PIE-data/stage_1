@@ -110,7 +110,7 @@ func (b *SQLiteBackend) IndexBatch(books []BookTokens, withPositions bool) error
 	defer touch.Close()
 
 	for _, book := range books {
-		stats := bookTermStats(book.Tokens, withPositions)
+		stats := book.termStats(withPositions)
 		terms := make([]string, 0, len(stats))
 		for t := range stats {
 			terms = append(terms, t)

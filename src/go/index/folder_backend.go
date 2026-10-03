@@ -169,7 +169,7 @@ func (b *FolderBackend) IndexBatch(books []BookTokens, withPositions bool) error
 	// term -> this batch's postings for it, in book order.
 	incoming := make(map[string][]folderPosting)
 	for _, book := range books {
-		for term, ts := range bookTermStats(book.Tokens, withPositions) {
+		for term, ts := range book.termStats(withPositions) {
 			p := folderPosting{BookID: book.BookID, TF: ts.tf}
 			if withPositions {
 				p.Positions = ts.positions
