@@ -375,9 +375,3 @@ Human-readable diagnostics go to stderr.
 `data/sample/8339.txt`, `8527.txt`, and `8708.txt` are copied from the
 corresponding committed files in `spec/golden/`. Original Gutenberg notices
 are retained in the raw files.
-
-## Documentation acceptance
-
-Issue #69 remains open until a teammate who did not implement the pipeline
-has followed the README from a clean checkout and recorded the result for
-each completed language implementation.
