@@ -377,7 +377,7 @@ func indexBooks(workspace, backendName string, positions bool, storage datalake.
 				return indexed, missing, err
 			}
 			tokens, _, _, _ := core.Tokenize(string(body), stopwords)
-			batch = append(batch, index.BookTokens{BookID: id, Tokens: tokens})
+			batch = append(batch, index.PrepareBook(id, tokens, positions))
 			done = append(done, id)
 		}
 		if err := backend.IndexBatch(batch, positions); err != nil {

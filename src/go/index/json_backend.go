@@ -269,7 +269,7 @@ func (b *JSONBackend) IndexBatch(books []BookTokens, withPositions bool) error {
 
 	touched := make(map[string]bool)
 	for _, book := range books {
-		for term, ts := range bookTermStats(book.Tokens, withPositions) {
+		for term, ts := range book.termStats(withPositions) {
 			entry := index[term]
 			posting := jsonPosting{BookID: book.BookID, TF: ts.tf}
 			if withPositions {

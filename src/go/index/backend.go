@@ -1,7 +1,11 @@
 // Package index implements the three inverted-index backends defined in SPEC §6.
 package index
 
-import "engine/core"
+import (
+	"strings"
+
+	"engine/core"
+)
 
 // Posting holds a single (bookID, tf, positions) triple.
 // Positions is nil when the index was built without --positions.
@@ -17,10 +21,31 @@ type IndexEntry struct {
 	Postings []Posting
 }
 
-// BookTokens is one book's kept tokens, the unit of a batch (SPEC §1.2 `index`).
+// BookTokens is one book of a batch (SPEC §1.2 `index`).
+//
+// Build it with PrepareBook, which keeps only the per-term counts and
+// positions and drops the token list: a batch holds up to --batch-size books,
+// and their raw tokens (one string per word occurrence) took several times
+// the memory of the counts.  Tokens is still accepted for callers that build
+// the struct directly (IndexBook, tests).
 type BookTokens struct {
 	BookID int
 	Tokens []core.Token
+	stats  map[string]*termStat
+}
+
+// PrepareBook groups a book's tokens by term right away, so the caller can
+// let the tokens go before the next book is read.
+func PrepareBook(bookID int, tokens []core.Token, withPositions bool) BookTokens {
+	return BookTokens{BookID: bookID, stats: bookTermStats(tokens, withPositions)}
+}
+
+// termStats returns the per-term data, computing it if it was not prepared.
+func (b BookTokens) termStats(withPositions bool) map[string]*termStat {
+	if b.stats != nil {
+		return b.stats
+	}
+	return bookTermStats(b.Tokens, withPositions)
 }
 
 // termStat is one term's tf and positions inside a single book.
@@ -36,8 +61,10 @@ func bookTermStats(tokens []core.Token, withPositions bool) map[string]*termStat
 	for _, tok := range tokens {
 		ts := stats[tok.Value]
 		if ts == nil {
+			// Clone the key: tok.Value is backed by the tokenizer's builder
+			// buffer, which can be larger than the word itself.
 			ts = &termStat{}
-			stats[tok.Value] = ts
+			stats[strings.Clone(tok.Value)] = ts
 		}
 		ts.tf++
 		if withPositions {
