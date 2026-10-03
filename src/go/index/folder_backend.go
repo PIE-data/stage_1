@@ -32,16 +32,19 @@ func NewFolderBackend(workspace string) (*FolderBackend, error) {
 // ---------- path helpers ---------------------------------------------------
 
 // termBucket returns the bucket directory name for a term.
-// SPEC §6.2: uppercase first code point if A–Z, otherwise _.
-// Since all terms are lowercased by the pipeline, the first code point is
-// always in [a-z] or non-ASCII, so this always returns "_" for real terms.
-// We implement the check faithfully as written in the spec.
+// SPEC §6.2: the uppercase first code point when it is an ASCII letter,
+// otherwise "_" -- the rule of the Python and Node implementations, so the
+// three languages spread the term files over the same 27 folders.  Written
+// against ASCII, not unicode.ToUpper, which differs between languages for
+// characters such as "ß".
 func termBucket(term string) string {
 	if term == "" {
 		return "_"
 	}
-	runes := []rune(term)
-	first := runes[0]
+	first := term[0]
+	if first >= 'a' && first <= 'z' {
+		return string(first - 'a' + 'A')
+	}
 	if first >= 'A' && first <= 'Z' {
 		return string(first)
 	}
@@ -152,55 +155,59 @@ func saveTerm(path string, postings []folderPosting, withPositions bool) error {
 // ---------- Backend implementation -----------------------------------------
 
 // IndexBook merges one book's tokens into the folder index.
-// SPEC §6.2: update = read file, merge, atomic rewrite of that file only.
 func (b *FolderBackend) IndexBook(bookID int, tokens []core.Token, withPositions bool) error {
-	// Build per-term data for this book.
-	type termInfo struct {
-		tf        int
-		positions []int
+	return b.IndexBatch([]BookTokens{{BookID: bookID, Tokens: tokens}}, withPositions)
+}
+
+// IndexBatch merges several books into the folder index.
+// SPEC §6.2: update = read file, merge, atomic rewrite of that file only --
+// each touched term file is rewritten once per batch, not once per book.
+func (b *FolderBackend) IndexBatch(books []BookTokens, withPositions bool) error {
+	if len(books) == 0 {
+		return nil
 	}
-	perTerm := make(map[string]*termInfo)
-	for _, tok := range tokens {
-		ti := perTerm[tok.Value]
-		if ti == nil {
-			ti = &termInfo{}
-			perTerm[tok.Value] = ti
-		}
-		ti.tf++
-		if withPositions {
-			ti.positions = append(ti.positions, tok.Position)
+	// term -> this batch's postings for it, in book order.
+	incoming := make(map[string][]folderPosting)
+	for _, book := range books {
+		for term, ts := range bookTermStats(book.Tokens, withPositions) {
+			p := folderPosting{BookID: book.BookID, TF: ts.tf}
+			if withPositions {
+				p.Positions = ts.positions
+			}
+			incoming[term] = append(incoming[term], p)
 		}
 	}
 
-	for term, ti := range perTerm {
+	// Sorted, so a crash always leaves the same prefix of terms written.
+	terms := make([]string, 0, len(incoming))
+	for t := range incoming {
+		terms = append(terms, t)
+	}
+	sort.Strings(terms)
+
+	for _, term := range terms {
 		path := b.termPath(term)
-		postings, err := loadTerm(path)
+		existing, err := loadTerm(path)
 		if err != nil {
 			return err
 		}
-
-		// Remove existing posting for this book (idempotency / INSERT OR REPLACE).
-		// Use a new nil slice — do NOT do postings[:0] which reuses backing array.
-		var filtered []folderPosting
-		for _, p := range postings {
-			if p.BookID != bookID {
-				filtered = append(filtered, p)
+		fresh := incoming[term]
+		replaced := make(map[int]bool, len(fresh))
+		for _, p := range fresh {
+			replaced[p.BookID] = true
+		}
+		// Replace this batch's books (idempotency).  A new slice -- never
+		// existing[:0], which would reuse the backing array.
+		merged := make([]folderPosting, 0, len(existing)+len(fresh))
+		for _, p := range existing {
+			if !replaced[p.BookID] {
+				merged = append(merged, p)
 			}
 		}
-		postings = filtered
+		merged = append(merged, fresh...)
+		sort.Slice(merged, func(i, j int) bool { return merged[i].BookID < merged[j].BookID })
 
-		newPosting := folderPosting{BookID: bookID, TF: ti.tf}
-		if withPositions {
-			newPosting.Positions = ti.positions
-		}
-		postings = append(postings, newPosting)
-
-		// Sort by ascending book_id.
-		sort.Slice(postings, func(i, j int) bool {
-			return postings[i].BookID < postings[j].BookID
-		})
-
-		if err := saveTerm(path, postings, withPositions); err != nil {
+		if err := saveTerm(path, merged, withPositions); err != nil {
 			return err
 		}
 	}

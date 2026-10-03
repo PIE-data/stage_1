@@ -53,6 +53,10 @@ func NewSQLiteBackend(workspace string) (*SQLiteBackend, error) {
 		return nil, err
 	}
 
+	// One connection: the PRAGMAs (page cache above all) and the TEMP table
+	// are per connection, and database/sql would otherwise open more.
+	db.SetMaxOpenConns(1)
+
 	if _, err := db.Exec(sqliteSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
@@ -69,86 +73,75 @@ func (b *SQLiteBackend) Close() error {
 // ---------- Backend implementation -----------------------------------------
 
 // IndexBook merges one book's tokens into the SQLite index.
-// SPEC §6.3:
-//   - INSERT OR REPLACE inside one transaction per batch (here, one book = one tx).
-//   - Each book's rows inserted in primary-key order (term ascending).
-//   - terms.df refreshed once per transaction via TEMP table.
 func (b *SQLiteBackend) IndexBook(bookID int, tokens []core.Token, withPositions bool) error {
-	// Build per-term data for this book.
-	type termInfo struct {
-		tf        int
-		positions []int
-	}
-	perTerm := make(map[string]*termInfo)
-	for _, tok := range tokens {
-		ti := perTerm[tok.Value]
-		if ti == nil {
-			ti = &termInfo{}
-			perTerm[tok.Value] = ti
-		}
-		ti.tf++
-		if withPositions {
-			ti.positions = append(ti.positions, tok.Position)
-		}
-	}
+	return b.IndexBatch([]BookTokens{{BookID: bookID, Tokens: tokens}}, withPositions)
+}
 
-	// Sort terms for primary-key order insertion (SPEC §6.3).
-	sortedTerms := make([]string, 0, len(perTerm))
-	for t := range perTerm {
-		sortedTerms = append(sortedTerms, t)
+// IndexBatch merges several books into the SQLite index. SPEC §6.3:
+//   - INSERT OR REPLACE inside ONE transaction per batch;
+//   - each book's rows inserted in primary-key order (term ascending);
+//   - terms.df refreshed once, just before the commit, for the terms touched,
+//     kept in a TEMP table (never in index.db).
+func (b *SQLiteBackend) IndexBatch(books []BookTokens, withPositions bool) error {
+	if len(books) == 0 {
+		return nil
 	}
-	sort.Strings(sortedTerms)
-
 	tx, err := b.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Create a TEMP table to track touched terms (SPEC §6.3).
-	// TEMP tables live in the temp database, not in index.db.
 	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS touched_terms (term TEXT PRIMARY KEY)`); err != nil {
 		return fmt.Errorf("create temp table: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM touched_terms`); err != nil {
 		return fmt.Errorf("clear temp table: %w", err)
 	}
+	insert, err := tx.Prepare(`INSERT OR REPLACE INTO postings (term, book_id, tf, positions) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insert.Close()
+	touch, err := tx.Prepare(`INSERT OR IGNORE INTO touched_terms (term) VALUES (?)`)
+	if err != nil {
+		return err
+	}
+	defer touch.Close()
 
-	// Insert postings.
-	for _, term := range sortedTerms {
-		ti := perTerm[term]
-		var posStr *string
-		if withPositions {
-			s := intSliceToString(ti.positions)
-			posStr = &s
+	for _, book := range books {
+		stats := bookTermStats(book.Tokens, withPositions)
+		terms := make([]string, 0, len(stats))
+		for t := range stats {
+			terms = append(terms, t)
 		}
-
-		_, err := tx.Exec(
-			`INSERT OR REPLACE INTO postings (term, book_id, tf, positions) VALUES (?, ?, ?, ?)`,
-			term, bookID, ti.tf, posStr,
-		)
-		if err != nil {
-			return fmt.Errorf("insert posting (%s, %d): %w", term, bookID, err)
-		}
-
-		// Track touched terms.
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO touched_terms (term) VALUES (?)`, term); err != nil {
-			return fmt.Errorf("track touched term: %w", err)
+		sort.Strings(terms)
+		for _, term := range terms {
+			ts := stats[term]
+			var positions *string
+			if withPositions {
+				s := intSliceToString(ts.positions)
+				positions = &s
+			}
+			if _, err := insert.Exec(term, book.BookID, ts.tf, positions); err != nil {
+				return fmt.Errorf("insert posting (%s, %d): %w", term, book.BookID, err)
+			}
+			if _, err := touch.Exec(term); err != nil {
+				return fmt.Errorf("track touched term: %w", err)
+			}
 		}
 	}
 
-	// Refresh terms.df for all touched terms (SPEC §6.3).
-	// "INSERT OR REPLACE INTO terms SELECT term, COUNT(*) FROM postings WHERE term IN (touched) GROUP BY term"
-	_, err = tx.Exec(`
+	// IN (subquery), not a JOIN: with the JOIN SQLite may scan the whole
+	// postings table instead of seeking each touched term.
+	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO terms (term, df)
-		SELECT p.term, COUNT(*) FROM postings p
-		INNER JOIN touched_terms tt ON p.term = tt.term
-		GROUP BY p.term
-	`)
-	if err != nil {
+		SELECT term, COUNT(*) FROM postings
+		WHERE term IN (SELECT term FROM touched_terms)
+		GROUP BY term
+	`); err != nil {
 		return fmt.Errorf("refresh df: %w", err)
 	}
-
 	return tx.Commit()
 }
 
