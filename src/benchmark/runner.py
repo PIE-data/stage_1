@@ -214,6 +214,29 @@ def copy_snapshot(src: Path, dst: Path) -> None:
     lock.unlink(missing_ok=True)
 
 
+def metadata_stats(ws: Path) -> dict:
+    """Size of the metadata database and a digest of its rows (E12).
+
+    The digest covers every column of every row in book_id order, so two
+    languages agree on it only if they parsed every header the same way."""
+    import hashlib
+    import sqlite3
+
+    marts = ws / "datamarts"
+    size = sum(p.stat().st_size for p in marts.glob("metadata.db*")) if marts.exists() else 0
+    digest, rows = hashlib.sha256(), 0
+    db = marts / "metadata.db"
+    if db.exists():
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            for row in con.execute("SELECT * FROM books ORDER BY book_id"):
+                digest.update(json.dumps(row, ensure_ascii=False).encode("utf-8") + b"\n")
+                rows += 1
+        finally:
+            con.close()
+    return {"meta_rows": rows, "meta_db_bytes": size, "meta_sha256": digest.hexdigest()}
+
+
 # ---------------------------------------------------------------- runner
 
 
@@ -354,12 +377,14 @@ class Runner:
     # ---------------------------------------------------------- records
 
     def record(self, *, experiment, metric, value, unit, lang, layout, backend, tier,
-               workers=None, rep=None, positions=None, aux=None) -> dict:
+               workers=None, rep=None, positions=None, aux=None, batch_size=None) -> dict:
+        if batch_size is None:
+            batch_size = 500 if backend else None  # the CLI default (SPEC.md §5.3, §6.3)
         rec = {
             "run_id": self.run_id, "spec_version": SPEC_VERSION, "language": lang,
             "impl_version": self.impl_version, "experiment": experiment,
             "datalake_layout": layout, "index_backend": backend, "positions": positions,
-            "corpus_size": tier, "workers": workers, "batch_size": 500 if backend else None,
+            "corpus_size": tier, "workers": workers, "batch_size": batch_size,
             "repetition": rep, "metric": metric, "value": round(value, 3), "unit": unit,
             "aux": {"layer": "macro", "cache": self.state.get("cache", "n/a"), **(aux or {})},
             "machine_id": self.args.machine_id,
@@ -371,9 +396,9 @@ class Runner:
 
     def measure(self, *, experiment, lang, layout, backend, tier, setup, argv,
                 ws, workers=None, positions=None, post=None, ok=(0,),
-                expect_lines=None) -> None:
+                expect_lines=None, batch_size=None) -> None:
         label = f"{experiment} {lang} {layout or '-'} {backend or '-'} n={tier}" + \
-                (f" w={workers}" if workers else "")
+                (f" w={workers}" if workers else "") + (f" b={batch_size}" if batch_size else "")
         for r in range(self.args.warmup + self.args.reps):
             setup()                                         # outside the timer
             measured = r >= self.args.warmup
@@ -396,12 +421,12 @@ class Runner:
             self.record(experiment=experiment, metric="wall_time", value=wall, unit="ms",
                         lang=lang, layout=layout, backend=backend, tier=tier,
                         workers=workers, rep=r - self.args.warmup + 1,
-                        positions=positions, aux=aux)
+                        positions=positions, aux=aux, batch_size=batch_size)
             if inner is not None:
                 self.record(experiment=experiment, metric="wall_time_internal", value=inner,
                             unit="ms", lang=lang, layout=layout, backend=backend, tier=tier,
                             workers=workers, rep=r - self.args.warmup + 1,
-                            positions=positions, aux=aux)
+                            positions=positions, aux=aux, batch_size=batch_size)
             print(f"[RUNNER] {label}  rep {r - self.args.warmup + 1} {wall:9.1f} ms  "
                   f"(inside {inner if inner is None else round(inner, 1)} ms)  "
                   f"rss {rss and rss // 2**20} MiB", file=sys.stderr)
@@ -512,6 +537,45 @@ class Runner:
                         argv=cli(self.engines(lang), ws, "hash", backend, "index", "--all",
                                  "--positions"))
 
+    def e12(self, tiers) -> None:
+        """Metadata datamart build -- the brief's "insertion speed" and, across
+        tiers, its scalability: `metadata --all` on a downloaded tier,
+        lang x layout x --batch-size.
+
+        --batch-size is a benchmark variable (SPEC.md §5.3): 500 books per
+        transaction is the default, 1 is per-row commit, the cost the spec
+        warns about.  The datalake snapshot is the one E1-E5 use; it carries
+        the ingestion receipts, the only source of `ingested_at`, so every
+        language builds the database from identical inputs -- and must build
+        identical rows: the content digest of `books` is recorded and compared
+        across languages, a check that the metadata parsers agree."""
+        for tier in tiers:
+            for layout in self.args.layouts:
+                snap = self.datalake_snapshot(layout, tier)
+                digests: dict[str, set] = {}
+                for lang in self.args.languages:
+                    for bs in self.args.meta_batch_sizes:
+                        ws = self.work / "ws"
+
+                        def post(ws=ws, lang=lang):
+                            stats = metadata_stats(ws)
+                            digests.setdefault(stats["meta_sha256"], set()).add(lang)
+                            return stats
+
+                        self.measure(
+                            experiment="E12", lang=lang, layout=layout, backend=None,
+                            tier=tier, ws=ws, batch_size=bs,
+                            setup=lambda: copy_snapshot(snap, ws), post=post,
+                            argv=cli(self.engines(lang), ws, layout, "json", "metadata",
+                                     "--all", "--batch-size", str(bs)))
+                if len(digests) > 1:
+                    print(f"[RUNNER] WARNING E12 {layout} n={tier}: the languages built "
+                          f"DIFFERENT metadata rows: {sorted(map(sorted, digests.values()))}",
+                          file=sys.stderr)
+                elif digests:
+                    print(f"[RUNNER] E12 {layout} n={tier}: identical metadata rows in "
+                          f"{', '.join(sorted(next(iter(digests.values()))))}", file=sys.stderr)
+
     def e4(self, tiers) -> None:
         """Recovery: SIGKILL half-way through a download, then reconcile and resume."""
         for tier in tiers:
@@ -564,15 +628,15 @@ class Runner:
             r = json.loads(line)
             key = (r["experiment"], r["metric"], r["unit"], r["language"],
                    r["datalake_layout"] or "", r["index_backend"] or "",
-                   r["corpus_size"], r["workers"] or "")
+                   r["corpus_size"], r["workers"] or "", r.get("batch_size") or "")
             rows.setdefault(key, []).append(r)
         out = self.results / "summary.csv"
         with open(out, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["experiment", "metric", "unit", "language", "layout", "backend",
                         "corpus_size", "workers", "n", "median", "q1", "q3", "iqr",
-                        "min", "max", "median_peak_rss_mib", "cache"])
-            for key, recs in sorted(rows.items(), key=lambda kv: tuple(map(str, kv[0]))):
+                        "min", "max", "median_peak_rss_mib", "cache", "batch_size"])
+            for (*key, batch), recs in sorted(rows.items(), key=lambda kv: tuple(map(str, kv[0]))):
                 vals = sorted(r["value"] for r in recs)
                 q1, q3 = (statistics.quantiles(vals, n=4, method="inclusive")[::2]
                           if len(vals) > 1 else (vals[0], vals[0]))
@@ -581,20 +645,22 @@ class Runner:
                 w.writerow([*key, len(vals), round(statistics.median(vals), 3), round(q1, 3),
                             round(q3, 3), round(q3 - q1, 3), vals[0], vals[-1],
                             round(statistics.median(rss) / 2**20, 1) if rss else "",
-                            "/".join(sorted({r["aux"].get("cache", "") for r in recs}))])
+                            "/".join(sorted({r["aux"].get("cache", "") for r in recs})), batch])
         return out
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Stage 1 benchmark runner")
     ap.add_argument("--experiments", default="E1,E3,E4,E5,E6,E8",
-                    help="comma list of E1,E3,E4,E5,E6,E8,E10,E11")
+                    help="comma list of E1,E3,E4,E5,E6,E8,E10,E11,E12")
     ap.add_argument("--languages", default="python")
     ap.add_argument("--layouts", default=",".join(LAYOUTS))
     ap.add_argument("--backends", default=",".join(BACKENDS))
     ap.add_argument("--tiers", default="100,1000")
     ap.add_argument("--scaling-tiers", default="100,1000,10000", help="for E10 and E11")
     ap.add_argument("--workers", default="1,8")
+    ap.add_argument("--meta-batch-sizes", default="1,500",
+                    help="E12: metadata --batch-size values (500 = default, 1 = per-row commit)")
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--work", default="~/bench/work")
@@ -612,6 +678,7 @@ def main() -> int:
     args.languages, args.layouts, args.backends = (split(args.languages),
                                                    split(args.layouts), split(args.backends))
     args.workers = [int(x) for x in split(args.workers)]
+    args.meta_batch_sizes = [int(x) for x in split(args.meta_batch_sizes)]
     tiers = [int(x) for x in split(args.tiers)]
     scaling = [int(x) for x in split(args.scaling_tiers)]
     if args.smoke:
@@ -632,7 +699,8 @@ def main() -> int:
              "E6": lambda: runner.e6(tiers),
              "E8": lambda: runner.e8(tiers),
              "E10": lambda: runner.e1(scaling, "E10", [1]),
-             "E11": lambda: runner.e6(scaling, "E11")}[exp]()
+             "E11": lambda: runner.e6(scaling, "E11"),
+             "E12": lambda: runner.e12(tiers)}[exp]()
     except RunFailed as exc:
         print(f"[RUNNER] FAILED: {exc}", file=sys.stderr)
         return 1
