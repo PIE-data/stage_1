@@ -221,6 +221,7 @@ class MetadataStore:
 
         self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA synchronous = NORMAL")
+        self.connection.execute("PRAGMA cache_size = -262144")  # SPEC.md §5.3
 
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS books (

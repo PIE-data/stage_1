@@ -26,6 +26,7 @@ func NewStore(workspace string) (*Store, error) {
 
 	_, _ = db.Exec("PRAGMA journal_mode = WAL;")
 	_, _ = db.Exec("PRAGMA synchronous = NORMAL;")
+	_, _ = db.Exec("PRAGMA cache_size = -262144;") // SPEC.md §5.3
 
 	schema := `
 	CREATE TABLE IF NOT EXISTS books (

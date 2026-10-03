@@ -1,5 +1,6 @@
 """
-Micro-benchmarks for E2 (lookup) and E7 (query), inside the Python process.
+Micro-benchmarks for E2 (lookup), E7 (query) and E13 (metadata queries),
+inside the Python process.
 docs/TASKS.md, "Two measurement layers"; issue #60.
 
 These operations take micro- to milliseconds: timed from outside through the
@@ -128,7 +129,7 @@ def indexes(corpus, datalake):
 
 
 def record(benchmark, *, experiment: str, layout=None, backend=None, workload=None,
-           corpus_size: int | None = None) -> dict:
+           corpus_size: int | None = None, extra: dict | None = None) -> dict:
     """Write one SPEC §8 record from the benchmark's raw timings."""
     data = sorted(t * 1e6 for t in benchmark.stats.stats.data)  # seconds -> us
     q1, _, q3 = statistics.quantiles(data, n=4, method="inclusive")
@@ -144,7 +145,7 @@ def record(benchmark, *, experiment: str, layout=None, backend=None, workload=No
         "aux": {"layer": "micro", "tool": "pytest-benchmark", "workload": workload,
                 "q1": round(q1, 3), "q3": round(q3, 3), "iqr": round(q3 - q1, 3),
                 "p95": round(p95, 3), "min": round(data[0], 3), "max": round(data[-1], 3),
-                "rounds": len(data), "cache": "warm"},
+                "rounds": len(data), "cache": "warm", **(extra or {})},
         "machine_id": os.environ.get("BENCH_MACHINE_ID", socket.gethostname()),
         "started_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     }
