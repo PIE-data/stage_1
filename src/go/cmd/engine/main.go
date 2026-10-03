@@ -11,33 +11,23 @@ import (
 	"time"
 
 	"engine/control"
+	"engine/datamart"
 )
 
 const SupportedSpecVersion = "1.1.9"
 
+const datalakeDefaultSource = "https://www.gutenberg.org"
+
 func findSpecVersion() (string, error) {
-	dir, err := os.Getwd()
+	root := datamart.RepoRoot()
+	if root == "" {
+		return "", fmt.Errorf("spec/SPEC_VERSION not found")
+	}
+	content, err := os.ReadFile(filepath.Join(root, "spec", "SPEC_VERSION"))
 	if err != nil {
 		return "", err
 	}
-
-	for {
-		candidate := filepath.Join(dir, "spec", "SPEC_VERSION")
-		if _, err := os.Stat(candidate); err == nil {
-			content, err := os.ReadFile(candidate)
-			if err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(string(content)), nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return "", fmt.Errorf("spec/SPEC_VERSION not found")
+	return strings.TrimSpace(string(content)), nil
 }
 
 func getEnvOrNil(key string) *string {
@@ -57,10 +47,6 @@ func getEnvIntOrNil(key string) *int {
 }
 
 func run(args []string) int {
-	startTime := time.Now()
-	startMono := time.Now()
-	startedAt := startTime.UTC().Format("2006-01-02T15:04:05.000Z")
-
 	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var workspace string
@@ -116,6 +102,18 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "--workspace is required")
 		return 2
 	}
+	switch datalakeLayout {
+	case "time", "book", "hash":
+	default:
+		fmt.Fprintf(os.Stderr, "--datalake-layout must be time|book|hash, got %q\n", datalakeLayout)
+		return exitUsage
+	}
+	switch indexBackend {
+	case "json", "folder", "sqlite", "mongo":
+	default:
+		fmt.Fprintf(os.Stderr, "--index-backend must be json|folder|sqlite|mongo, got %q\n", indexBackend)
+		return exitUsage
+	}
 
 	version, err := findSpecVersion()
 	if err != nil {
@@ -127,64 +125,151 @@ func run(args []string) int {
 		return 1
 	}
 
-	exitCode := 0
+	var now *time.Time
+	if nowOverride != "" {
+		t, err := parseInstant(nowOverride)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "--now is not ISO8601: %q\n", nowOverride)
+			return exitUsage
+		}
+		now = &t
+	}
 
 	cmdFlags := flag.NewFlagSet(command, flag.ContinueOnError)
 	cmdFlags.SetOutput(os.Stderr)
-	
+	var (
+		bookID     int
+		manifest   string
+		workers    int
+		sourceBase string
+		all        bool
+		positions  bool
+		batchSize  int
+		termsStr   string
+		mode       string
+		limit      int
+		since      string
+		out        string
+		iterations int
+		totalBooks int
+	)
+	// The command flags of SPEC.md §1, declared per command so that an
+	// unknown flag is an argument error (exit 2), as in the other languages.
 	switch command {
-	case "reconcile":
-		if err := cmdFlags.Parse(positionals[1:]); err != nil {
-			return 2
+	case "download":
+		cmdFlags.IntVar(&bookID, "book-id", -1, "one book")
+		cmdFlags.StringVar(&manifest, "manifest", "", "file of book ids")
+		cmdFlags.IntVar(&workers, "workers", 1, "requests in flight")
+		cmdFlags.StringVar(&sourceBase, "source-base", datalakeDefaultSource, "mirror base URL")
+	case "split", "lookup":
+		cmdFlags.IntVar(&bookID, "book-id", -1, "one book")
+	case "index", "metadata":
+		cmdFlags.IntVar(&bookID, "book-id", -1, "one book")
+		cmdFlags.BoolVar(&all, "all", false, "every pending book")
+		cmdFlags.IntVar(&batchSize, "batch-size", 500, "books per committed batch")
+		if command == "index" {
+			cmdFlags.BoolVar(&positions, "positions", false, "store token positions")
 		}
-		lck := control.NewWorkspaceLock(workspace)
-		if err := lck.Lock(); err != nil {
-			return 4
-		}
-		defer lck.Unlock()
-		exitCode = runReconcile(workspace, datalakeLayout)
-
 	case "query":
-		var termsStr string
-		var mode string
-		var limit int
-		cmdFlags.StringVar(&termsStr, "terms", "", "terms to search")
-		cmdFlags.StringVar(&mode, "mode", "and", "and|or")
-		cmdFlags.IntVar(&limit, "limit", 0, "truncate after ordering")
-		if err := cmdFlags.Parse(positionals[1:]); err != nil {
-			return 2
-		}
-		if limit < 0 {
-			return 2
-		}
-		exitCode = runQuery(workspace, indexBackend, termsStr, mode, limit)
-
+		cmdFlags.StringVar(&termsStr, "terms", "", "space-separated terms")
+		cmdFlags.StringVar(&mode, "mode", "", "and|or")
+		cmdFlags.IntVar(&limit, "limit", -1, "truncate after ordering")
+	case "scan-new":
+		cmdFlags.StringVar(&since, "since", "", "ISO8601 instant")
+	case "export-canonical":
+		cmdFlags.StringVar(&out, "out", "", "output path")
 	case "control-step":
-		var iterations int
-		var totalBooks int
-		var manifest string
-		var sourceBase string
-		cmdFlags.IntVar(&iterations, "iterations", 1, "number of iterations")
-		cmdFlags.IntVar(&totalBooks, "total-books", 70000, "total books")
-		cmdFlags.StringVar(&manifest, "manifest", "", "manifest file")
-		cmdFlags.StringVar(&sourceBase, "source-base", "", "source URL base")
-		if err := cmdFlags.Parse(positionals[1:]); err != nil {
-			return 2
+		cmdFlags.IntVar(&iterations, "iterations", 0, "number of iterations")
+		cmdFlags.IntVar(&totalBooks, "total-books", 70000, "candidate ids 1..N")
+		cmdFlags.StringVar(&manifest, "manifest", "", "candidate ids, in order")
+		cmdFlags.StringVar(&sourceBase, "source-base", datalakeDefaultSource, "mirror base URL")
+	case "reconcile":
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
+		return exitUsage
+	}
+	if err := cmdFlags.Parse(positionals[1:]); err != nil {
+		return exitUsage
+	}
+	if cmdFlags.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected arguments: %v\n", cmdFlags.Args())
+		return exitUsage
+	}
+	set := make(map[string]bool)
+	cmdFlags.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	// Exactly one of --book-id / --manifest|--all where SPEC.md §1 says so.
+	usage := ""
+	switch command {
+	case "download":
+		if set["book-id"] == (manifest != "") {
+			usage = "download needs exactly one of --book-id, --manifest"
 		}
+	case "index", "metadata":
+		if set["book-id"] == all {
+			usage = command + " needs exactly one of --book-id, --all"
+		}
+	case "split", "lookup":
+		if !set["book-id"] {
+			usage = command + " needs --book-id"
+		}
+	case "query":
+		if !set["terms"] || !set["mode"] {
+			usage = "query needs --terms and --mode"
+		} else if set["limit"] && limit < 0 {
+			usage = "--limit must be >= 0"
+		}
+	case "export-canonical":
+		if out == "" {
+			usage = "export-canonical needs --out"
+		}
+	case "control-step":
+		if !set["iterations"] {
+			usage = "control-step needs --iterations"
+		}
+	}
+	if usage != "" {
+		fmt.Fprintln(os.Stderr, usage)
+		return exitUsage
+	}
+
+	// Writers hold control/run.lock for the whole run (SPEC.md §1.2).
+	switch command {
+	case "download", "split", "index", "metadata", "control-step", "reconcile":
 		lck := control.NewWorkspaceLock(workspace)
 		if err := lck.Lock(); err != nil {
-			return 4
+			fmt.Fprintf(os.Stderr, "workspace locked: %v\n", err)
+			return exitLocked
 		}
 		defer lck.Unlock()
-		// TODO: Implement control-step logic. The instructions say "Control layer + reconcile...". Is control-step full port required?
-		// "The last step of the port... Control layer + reconcile -- invariants I1-I4 pass, including SIGKILL at 50% and resume; reconcile rebuilds the control files after a crash between the rename and the append".
-		// I will implement control-step if needed, but the Python reference control_pipeline_step was mentioned to be in core/control_layer.py in phase 1, but then moved to pipeline.py? Let's check.
-		exitCode = runControlStep(workspace, iterations, totalBooks, manifest, sourceBase, datalakeLayout, indexBackend, nowOverride)
+	}
 
-	// Stub out other commands if not fully implemented in this ticket
-	default:
-		fmt.Fprintf(os.Stderr, "Unimplemented command: %s\n", command)
-		exitCode = 2
+	// The clock covers the command only, not parsing or the lock.
+	startMono := time.Now()
+	startedAt := startMono.UTC().Format("2006-01-02T15:04:05.000Z")
+	exitCode := exitOK
+	switch command {
+	case "download":
+		exitCode = runDownload(workspace, datalakeLayout, now, bookID, manifest, workers, sourceBase)
+	case "split":
+		exitCode = runSplit(workspace, datalakeLayout, now, bookID)
+	case "index":
+		exitCode = runIndex(workspace, datalakeLayout, indexBackend, bookID, all, positions, batchSize)
+	case "metadata":
+		exitCode = runMetadata(workspace, datalakeLayout, bookID, all, batchSize)
+	case "lookup":
+		exitCode = runLookup(workspace, datalakeLayout, bookID)
+	case "scan-new":
+		exitCode = runScanNew(workspace, datalakeLayout, since)
+	case "query":
+		exitCode = runQuery(workspace, indexBackend, termsStr, mode, limit)
+	case "export-canonical":
+		exitCode = runExportCanonical(workspace, indexBackend, out)
+	case "control-step":
+		exitCode = runControlStep(workspace, iterations, totalBooks, manifest, sourceBase,
+			datalakeLayout, indexBackend, now)
+	case "reconcile":
+		exitCode = runReconcile(workspace, datalakeLayout)
 	}
 
 	wallTimeMs := float64(time.Since(startMono).Nanoseconds()) / 1e6

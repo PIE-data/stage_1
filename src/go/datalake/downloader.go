@@ -2,12 +2,16 @@ package datalake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrHTTPNotFound marks a 404: the book does not exist, never retried.
+var ErrHTTPNotFound = errors.New("HTTP 404")
 
 const DefaultSourceBase = "https://www.gutenberg.org"
 
@@ -39,7 +43,7 @@ func Download(ctx context.Context, bookID int, sourceBase string) ([]byte, error
 		}
 		if resp.StatusCode == 404 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("book %d not found (404)", bookID)// Never retry 404
+			return nil, fmt.Errorf("book %d: %w", bookID, ErrHTTPNotFound) // never retry a 404
 		}
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 {
 			resp.Body.Close()

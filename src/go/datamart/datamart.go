@@ -51,14 +51,42 @@ func normalizeWhitespace(s string) string {
 	return strings.TrimSpace(wsRe.ReplaceAllString(s, " "))
 }
 
-func LoadLanguageMap(workspace string) map[string]string {
+// RepoRoot is the nearest ancestor of the working directory, or of the
+// executable, that holds spec/SPEC_VERSION; "" if there is none.  The spec
+// files (language map, stop words) live in the repository, never in the
+// workspace: the benchmark runner's workspaces are bare copies.
+func RepoRoot() string {
+	var starts []string
+	if wd, err := os.Getwd(); err == nil {
+		starts = append(starts, wd)
+	}
+	if exe, err := os.Executable(); err == nil {
+		starts = append(starts, filepath.Dir(exe))
+	}
+	for _, dir := range starts {
+		for {
+			if _, err := os.Stat(filepath.Join(dir, "spec", "SPEC_VERSION")); err == nil {
+				return dir
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return ""
+}
+
+// LoadLanguageMap reads <root>/spec/language_map.txt (root = the repository).
+func LoadLanguageMap(root string) map[string]string {
 	mapping := make(map[string]string)
-	path := filepath.Join(workspace, "spec", "language_map.txt")
+	path := filepath.Join(root, "spec", "language_map.txt")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return mapping
 	}
-	
+
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -81,21 +109,21 @@ func parseReleaseDate(val string) *string {
 	if matches == nil {
 		return nil
 	}
-	
+
 	monthStr := strings.ToLower(matches[1])
 	monthNum, ok := months[monthStr]
 	if !ok {
 		return nil
 	}
-	
+
 	day, _ := strconv.Atoi(matches[2])
 	year, _ := strconv.Atoi(matches[3])
-	
+
 	t := time.Date(year, time.Month(monthNum), day, 0, 0, 0, 0, time.UTC)
 	if t.Year() != year || int(t.Month()) != monthNum || t.Day() != day {
 		return nil
 	}
-	
+
 	res := t.Format("2006-01-02")
 	return &res
 }
@@ -103,7 +131,7 @@ func parseReleaseDate(val string) *string {
 func ParseHeader(header string, langMap map[string]string) map[string]string {
 	fields := make(map[string]string)
 	currentField := ""
-	
+
 	lines := strings.Split(header, "\n")
 	for _, line := range lines {
 		// Blank lines do not end a field (SPEC §5.2, 1.1.9): Gutenberg ends
@@ -125,17 +153,17 @@ func ParseHeader(header string, langMap map[string]string) map[string]string {
 			}
 			continue
 		}
-		
+
 		currentField = ""
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) < 2 {
 			continue
 		}
-		
+
 		if strings.HasPrefix(parts[0], " ") || strings.HasPrefix(parts[0], "\t") {
 			continue
 		}
-		
+
 		name := normalizeWhitespace(parts[0])
 		if mapped, ok := knownFields[strings.ToLower(name)]; ok {
 			currentField = mapped
@@ -150,7 +178,7 @@ func ParseHeader(header string, langMap map[string]string) map[string]string {
 
 func ParseRecord(bookID int, header, body, headerPath, bodyPath, ingestedAt string, langMap map[string]string) MetadataRecord {
 	rawFields := ParseHeader(header, langMap)
-	
+
 	record := MetadataRecord{
 		BookID:     bookID,
 		HeaderPath: filepath.ToSlash(headerPath),
@@ -158,11 +186,11 @@ func ParseRecord(bookID int, header, body, headerPath, bodyPath, ingestedAt stri
 		BodyBytes:  int64(len(body)),
 		IngestedAt: ingestedAt,
 	}
-	
+
 	h := sha256.New()
 	h.Write([]byte(body))
 	record.SHA256 = hex.EncodeToString(h.Sum(nil))
-	
+
 	title, ok := rawFields["title"]
 	if !ok || title == "" {
 		log.Printf("WARNING: MISSING_TITLE for book %d", bookID)
@@ -170,12 +198,12 @@ func ParseRecord(bookID int, header, body, headerPath, bodyPath, ingestedAt stri
 	} else {
 		record.Title = title
 	}
-	
+
 	if author, ok := rawFields["author"]; ok && author != "" {
 		cleanAuthor := strings.TrimSpace(authorLifeRe.ReplaceAllString(author, ""))
 		record.Author = &cleanAuthor
 	}
-	
+
 	if lang, ok := rawFields["language"]; ok && lang != "" {
 		lowerLang := strings.ToLower(lang)
 		if code, mapped := langMap[lowerLang]; mapped {
@@ -184,11 +212,10 @@ func ParseRecord(bookID int, header, body, headerPath, bodyPath, ingestedAt stri
 			record.Language = &lowerLang
 		}
 	}
-	
+
 	if dateStr, ok := rawFields["release_date"]; ok {
 		record.ReleaseDate = parseReleaseDate(dateStr)
 	}
-	
+
 	return record
 }
-

@@ -13,25 +13,29 @@ import (
 	"engine/control"
 	"engine/core"
 	"engine/datalake"
-	"engine/index"
 )
 
 func runQuery(workspace, indexBackend, termsStr, mode string, limit int) int {
-	if indexBackend != "json" && indexBackend != "folder" && indexBackend != "sqlite" {
+	if !validBackend(indexBackend) {
 		fmt.Fprintf(os.Stderr, "query is not implemented for backend %q\n", indexBackend)
-		return 2
+		return exitUsage
+	}
+	if mode != "and" && mode != "or" {
+		fmt.Fprintf(os.Stderr, "--mode must be and|or, got %q\n", mode)
+		return exitUsage
+	}
+	// No index is an error, not an empty result (SPEC.md §1.1) -- checked
+	// before opening, because opening creates the folder / database.
+	if !indexExists(indexBackend, workspace) {
+		fmt.Fprintf(os.Stderr, "no %s index in %s -- run `index --all` first\n", indexBackend, workspace)
+		return exitError
 	}
 
-	stopwords, err := core.LoadStopwords(filepath.Join(workspace, "spec", "stopwords_en.txt"))
-	// fallback if spec is in current dir
-	if err != nil {
-		stopwords, err = core.LoadStopwords(filepath.Join("spec", "stopwords_en.txt"))
-	}
+	stopwords, err := loadStopwords()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load stopwords: %v\n", err)
-		return 1
+		return exitError
 	}
-
 	tokens, _, _, _ := core.Tokenize(termsStr, stopwords)
 	var terms []string
 	seen := make(map[string]bool)
@@ -41,39 +45,32 @@ func runQuery(workspace, indexBackend, termsStr, mode string, limit int) int {
 			terms = append(terms, t.Value)
 		}
 	}
-
 	if len(terms) == 0 {
-		dropped := len(strings.Fields(termsStr))
-		fmt.Fprintf(os.Stderr, "every query term was filtered out (%d given): stop words, single characters and all-digit strings are never indexed\n", dropped)
-		return 0
+		fmt.Fprintf(os.Stderr, "every query term was filtered out (%d given): stop words, single characters and all-digit strings are never indexed\n", len(strings.Fields(termsStr)))
+		return exitOK
 	}
 
-	var backend index.Backend
-	switch indexBackend {
-	case "json":
-		backend, err = index.NewJSONBackend(workspace)
-	case "folder":
-		backend, err = index.NewFolderBackend(workspace)
-	case "sqlite":
-		backend, err = index.NewSQLiteBackend(workspace)
-	}
-
+	backend, err := openBackend(indexBackend, workspace)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "no %s index in %s -- run `index --all` first: %v\n", indexBackend, workspace, err)
-		return 1
+		fmt.Fprintf(os.Stderr, "open %s index: %v\n", indexBackend, err)
+		return exitError
 	}
 	defer backend.Close()
 
+	// limit < 0 means "no --limit" here; the flag itself was validated.
 	ids, err := backend.Query(terms, mode, limit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "query error: %v\n", err)
-		return 1
+		return exitError
 	}
-
+	var out strings.Builder
 	for _, id := range ids {
-		fmt.Printf("%d\n", id)
+		out.WriteString(strconv.Itoa(id))
+		out.WriteByte('\n')
 	}
-	return 0
+	os.Stdout.WriteString(out.String())
+	fmt.Fprintf(os.Stderr, "%d book(s) for [%s] mode=%s backend=%s\n", len(ids), strings.Join(terms, " "), mode, indexBackend)
+	return exitOK
 }
 
 func runReconcile(workspace, datalakeLayout string) int {
@@ -170,7 +167,7 @@ func runReconcile(workspace, datalakeLayout string) int {
 
 	added := len(onDisk) - len(before)
 	dropped := len(before) - len(onDisk) // not exact set diff but enough for summary print
-	
+
 	fmt.Fprintf(os.Stderr, "reconcile: %d downloaded (%d recovered, %d dropped), %d indexed, %d partial file(s) removed, %d receipt(s) recovered, %d removed\n",
 		len(onDisk), added, dropped, len(indexed), removedParts, receiptsRecovered, receiptsRemoved)
 
@@ -194,11 +191,13 @@ func readReceipt(workspace, layout string, bookID int) map[string]interface{} {
 	return record
 }
 
-func writeReceipt(workspace, layout string, bookID int, headerPath, bodyPath string, instant time.Time) {
+func writeReceipt(workspace, layout string, bookID int, headerPath, bodyPath string, instant time.Time) error {
 	dir := filepath.Join(workspace, "control", "ingestion", layout)
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
 	path := filepath.Join(dir, fmt.Sprintf("%d.json", bookID))
-	
+
 	record := struct {
 		BookID     int    `json:"book_id"`
 		HeaderPath string `json:"header_path"`
@@ -214,10 +213,10 @@ func writeReceipt(workspace, layout string, bookID int, headerPath, bodyPath str
 	buf := &bytes.Buffer{}
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
-	enc.Encode(record)
-	
-	bytes := []byte(strings.TrimSpace(buf.String()) + "\n")
-	datalake.WriteAtomically(path, bytes)
+	if err := enc.Encode(record); err != nil {
+		return err
+	}
+	return datalake.WriteAtomically(path, []byte(strings.TrimSpace(buf.String())+"\n"))
 }
 
 func recoveredInstant(workspace, layout, bodyPath string) time.Time {
@@ -227,11 +226,11 @@ func recoveredInstant(workspace, layout, bodyPath string) time.Time {
 		return time.Now().UTC().Truncate(time.Second)
 	}
 	mtime := info.ModTime().UTC().Truncate(time.Second)
-	
+
 	if layout != "time" {
 		return mtime
 	}
-	
+
 	parts := strings.Split(bodyPath, "/")
 	if len(parts) >= 3 {
 		date := parts[1]
@@ -246,4 +245,3 @@ func recoveredInstant(workspace, layout, bodyPath string) time.Time {
 	}
 	return mtime
 }
-

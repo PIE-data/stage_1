@@ -31,11 +31,12 @@ func TestFolderBackend_Bucket(t *testing.T) {
 		term   string
 		bucket string
 	}{
-		{"hello", "_"},    // lowercase h → _
-		{"alpha", "_"},    // lowercase a → _
-		{"zebra", "_"},    // lowercase z → _
-		{"café", "_"},     // non-ASCII first codepoint → _
-		{"123ab", "_"},    // digit first → _
+		{"hello", "H"}, // ASCII letter → its uppercase
+		{"alpha", "A"},
+		{"zebra", "Z"},
+		{"café", "C"},   // only the FIRST code point matters
+		{"éclair", "_"}, // non-ASCII first code point → _
+		{"123ab", "_"},  // digit first → _
 	}
 
 	for _, tc := range cases {
@@ -55,8 +56,8 @@ func TestFolderBackend_SafeTerm(t *testing.T) {
 		{"hello", "hello"},
 		{"hello world", "hello%20world"},
 		{"don't", "don%27t"},
-		{"café", "caf%C3%A9"},       // é = U+00E9 → UTF-8 0xC3 0xA9
-		{"naïve", "na%C3%AFve"},     // ï = U+00EF → UTF-8 0xC3 0xAF
+		{"café", "caf%C3%A9"},   // é = U+00E9 → UTF-8 0xC3 0xA9
+		{"naïve", "na%C3%AFve"}, // ï = U+00EF → UTF-8 0xC3 0xAF
 		{"a&b", "a%26b"},
 		{"abc123", "abc123"},
 	}
@@ -76,8 +77,8 @@ func TestFolderBackend_FileLocation(t *testing.T) {
 
 	_ = b.IndexBook(1, syntheticTokens([]string{"hello"}, 0), false)
 
-	// Bucket must be _ for lowercase term
-	expected := filepath.Join(b.workspace, "datamarts", "inverted_index", "_", "hello.txt")
+	// Bucket is the uppercase first letter (SPEC §6.2, as in Python and Node)
+	expected := filepath.Join(b.workspace, "datamarts", "inverted_index", "H", "hello.txt")
 	if _, err := os.Stat(expected); err != nil {
 		t.Errorf("expected posting file at %s, got: %v", expected, err)
 	}
@@ -91,7 +92,7 @@ func TestFolderBackend_FileFormat_WithPositions(t *testing.T) {
 	_ = b.IndexBook(3, syntheticTokens([]string{"word", "word"}, 0), true)
 	_ = b.IndexBook(1, syntheticTokens([]string{"word"}, 5), true)
 
-	f, err := os.Open(filepath.Join(b.workspace, "datamarts", "inverted_index", "_", "word.txt"))
+	f, err := os.Open(filepath.Join(b.workspace, "datamarts", "inverted_index", "W", "word.txt"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestFolderBackend_FileFormat_WithoutPositions(t *testing.T) {
 
 	_ = b.IndexBook(2, syntheticTokens([]string{"word", "word"}, 0), false)
 
-	f, err := os.Open(filepath.Join(b.workspace, "datamarts", "inverted_index", "_", "word.txt"))
+	f, err := os.Open(filepath.Join(b.workspace, "datamarts", "inverted_index", "W", "word.txt"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestFolderBackend_NonASCIITerm(t *testing.T) {
 	_ = b.IndexBook(1, []core.Token{{Value: "café", Position: 0}}, false)
 
 	// File must exist at _/caf%C3%A9.txt
-	expected := filepath.Join(b.workspace, "datamarts", "inverted_index", "_", "caf%C3%A9.txt")
+	expected := filepath.Join(b.workspace, "datamarts", "inverted_index", "C", "caf%C3%A9.txt")
 	if _, err := os.Stat(expected); err != nil {
 		t.Errorf("expected file at %s: %v", expected, err)
 	}
