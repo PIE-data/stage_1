@@ -183,65 +183,192 @@
 	
 	% ---------------------------------------------------------------------------
 	\section{Design Decisions}
+	\label{sec:design}
 	% ---------------------------------------------------------------------------
-	The implementation choices were made to maximize comparability, reproducibility, and the
-	amount of useful benchmarking that could be completed within the project schedule.
-	
+	Section~\ref{sec:architecture} describes \emph{what} the data layer contains; this
+	section explains \emph{why}. Every decision was taken to make the comparison of
+	Section~\ref{sec:benchmarks} fair first and fast second: three implementations that do
+	not provably do the same work cannot be compared at all.
+
+	\subsection{One Specification, One Oracle}
+
+	All three implementations are written against a single specification,
+	\texttt{docs/SPEC.md} (version~1.1.9). It fixes the command-line interface, the
+	tokenizer, the header-parsing rules, the datalake layouts, the index and metadata
+	formats and the exit codes. Every CLI refuses to run when its supported version differs
+	from \texttt{spec/SPEC\_VERSION}, so a change to the specification cannot silently leave
+	one language behind.
+
+	Equivalence is checked, not assumed. Each implementation exports its inverted index in a
+	\emph{canonical} form (JSON, UTF-8, no insignificant whitespace, terms in UTF-8 byte
+	order, postings by ascending book id, positions ascending), and the SHA-256 of that
+	export must equal a frozen value computed on 20 golden books. Continuous integration
+	runs this \emph{conformance gate} for every language $\times$ index backend $\times$
+	datalake layout: all 27 combinations produce the same hash. The metadata datamart is
+	checked the same way during the benchmarks: the runner hashes every row that each
+	language writes, and the three languages produce identical rows for every layout and
+	corpus size.
+
+	Two details of the canonical form exist only because of the other languages: terms are
+	sorted by their UTF-8 bytes, because JavaScript's native string order (UTF-16) differs
+	for characters outside the Basic Multilingual Plane; and Go's JSON encoder must not
+	escape \texttt{<}, \texttt{>} and \texttt{\&}, which it does by default.
+
 	\subsection{Programming Languages: Python, Node.js, and Go}
-	
-	Python serves as the reference implementation. Node.js and Go were selected as the two
-	additional languages because they provide meaningfully different runtime models while
-	remaining lightweight to build and execute. Python provides a familiar high-level
-	baseline, Node.js uses the V8 runtime and an event-driven execution model, and Go provides
-	a compiled implementation with lightweight concurrency. Using the same CLI contract
-	across all three keeps the benchmark comparison focused on implementation behavior.
-	
-	\subsection{Index Backends: JSON, Folder, and SQLite}
-	
-	The three mandatory index structures deliberately represent different physical storage
-	strategies: one large file, many small files, and an embedded B-tree database. SQLite was
-	chosen instead of MongoDB because the project brief permits custom index approaches,
-	SQLite requires no external service, and it is already used for the metadata datamart.
-	This avoids introducing network and service-management overhead into the mandatory
-	comparison.
-	
-	\subsection{English-only Corpus and Dataset Tiers}
-	
-	The benchmark corpus is restricted to English-language books so that all implementations
-	can use one fixed stop-word list and identical normalization rules. The planned corpus
-	sizes are 100, 1,000, and 10,000 books. These tiers allow both small controlled runs and
-	a scalability experiment that reaches the order of tens of thousands of documents.
-	
-	\subsection{No Stemming}
-	
-	Stemming is intentionally excluded from Stage~1. Equivalent stemming libraries in Python,
-	Node.js, and Go are not guaranteed to produce byte-identical output for every token.
-	Because the project uses canonical export hashes as a strict conformance test, stemming
-	would introduce an unnecessary source of cross-language divergence. It can be revisited
-	in Stage~2 if the equivalence contract is extended accordingly.
-	
-	\subsection{Word-level Positional Index}
-	
-	The inverted index stores term frequency and token positions in addition to document IDs.
-	This requires more storage than a record-level index, but it preserves information needed
-	for phrase queries and ranking algorithms such as TF-IDF or BM25 in the next stage.
-	
-	\subsection{Local Mirror for Benchmarks}
-	
-	All benchmark downloads use a local HTTP mirror instead of the live Project Gutenberg
-	service. Otherwise, measured ingestion time would be dominated by internet latency and
-	remote rate limiting rather than by the pipeline itself. A separate live-network run may
-	be reported as a sensitivity check, but it is not mixed with the controlled benchmark
-	results.
-	
-	\subsection{Metadata Comparison Out of Scope}
-	
-	The brief describes comparison of alternative metadata stores as optional. For Stage~1,
-	metadata is therefore kept in SQLite and benchmarking effort is concentrated on the two
-	mandatory experimental dimensions: datalake layout and inverted-index structure.
-	
+
+	Python is the reference implementation. Node.js and Go were chosen over Java because
+	neither needs a build system to get started, and together the three cover the execution
+	models we wanted to contrast: an interpreter (CPython), a just-in-time compiled runtime
+	with an event loop (V8) and ahead-of-time compiled native code with lightweight threads
+	(Go). The work was split by language on top of the shared specification, with one rule:
+	nobody ported a component that affects the canonical hash and that they had written in
+	Python, so that each port is an independent reading of the specification rather than a
+	translation of the reference code. The rule was not kept everywhere: parts of the Node.js
+	JSON backend and of the Go command-line wiring and index batching were completed by the
+	author of the Python reference late in the project. Section~\ref{sec:benchmarks}
+	lists this among the threats to validity.
+
+	\subsection{Tokenization and Index Granularity}
+
+	Text is normalised with NFKC, lower-cased independently of the locale and folded to
+	ASCII where a mapping exists. Tokens are maximal runs of letters, digits and apostrophes;
+	tokens shorter than 2 or longer than 40 code points, tokens made only of digits and
+	English stop words are discarded. Positions are assigned \emph{before} filtering, so a
+	gap between two positions marks a removed stop word.
+
+	The index is word-level: for every term and book it stores the term frequency and the
+	positions. This costs more space than a list of book ids, but it is what phrase queries
+	and ranking functions such as TF-IDF or BM25 need in Stage~2.
+
+	We deliberately do \textbf{not} stem. Stemming libraries in the three languages do not
+	produce byte-identical output, which would break the conformance hash, and a
+	hand-written stemmer in three languages was out of scope. For the same reason, regular
+	expressions are allowed only to classify a single code point by Unicode category:
+	regular-expression engines differ between languages precisely in the corners (Unicode
+	classes, word boundaries) that decide where a token ends.
+
+	\subsection{Corpus and Download}
+
+	English books only, so that one stop-word list applies to the whole corpus. Fixed
+	manifests of 100, 1\,000 and 10\,000 books (\texttt{spec/corpus/}) give a factor of ten
+	between sizes; the measurements use 100 and 1\,000. Every benchmark downloads from a
+	local HTTP mirror of Project Gutenberg: against the live site we would be measuring
+	internet latency and its rate limiter, not our code.
+
+	\subsection{Datalake Layouts}
+
+	The three layouts trade lookup cost against the cost of finding new books:
+	\begin{itemize}
+		\item \textbf{time} groups books by ingestion hour. Finding the books ingested since a
+		given instant only reads the folders from that hour on; looking up one book by id
+		means searching every hour folder.
+		\item \textbf{book} gives every book its own folder. Lookup is a direct path, and the
+		folder can hold a self-describing \texttt{meta.json}; finding new books requires
+		checking the modification time of every book.
+		\item \textbf{hash} places a book in a two-level folder taken from the digits of its
+		id, padded to six (\texttt{001342} $\rightarrow$ \texttt{00/13}). Lookup is a direct
+		path and no folder holds more than 100 sub-folders, without one folder per book.
+	\end{itemize}
+
+	Every file is written atomically (temporary file, flush, \texttt{fsync}, rename,
+	\texttt{fsync} of the parent folder), so a crash leaves either the old file or the new
+	one, never half a book. In the benchmarks the time layout is filled at 100 books per
+	hour: with a single ingestion instant every book would land in one folder and the layout
+	would degenerate into a flat directory, which is not the structure being evaluated.
+
+	\subsection{Inverted Index Backends}
+
+	The three structures hold exactly the same information and differ only in how they
+	store it: one large file (\textbf{json}), many small files (\textbf{folder}) and an
+	embedded B-tree (\textbf{sqlite}).
+	\begin{itemize}
+		\item \textbf{json}: updating the index means reading, merging and rewriting the whole
+		file. Incremental side files are forbidden by the specification precisely so that
+		the update experiment measures that cost honestly.
+		\item \textbf{folder}: one file per term, in 27 buckets (first letter, or \texttt{\_}).
+		Term names are percent-encoded because raw terms collide as file names on
+		case-insensitive file systems (NTFS, macOS) and on reserved names such as
+		\texttt{CON}. Updating a book rewrites only the files of its terms.
+		\item \textbf{sqlite}: postings live in a \texttt{WITHOUT ROWID} table keyed by
+		\texttt{(term, book\_id)}, so the postings of a term are read from the primary-key
+		tree itself with no second lookup; document frequency is kept in a separate
+		\texttt{terms} table because every query reads it.
+	\end{itemize}
+
+	SQLite was preferred to MongoDB as the third structure: it needs no external service,
+	its drivers are mature in all three languages, it is already used for the metadata
+	datamart, and it turns the comparison into a clean axis --- one file, many files, one
+	embedded B-tree --- instead of files versus a network server.
+
+	\paragraph{Implementation choices that matter for the measurements.}
+	Books are indexed in batches of 500: one rewrite of the JSON file, one rewrite of each
+	touched term file and one SQLite transaction per batch, with document frequencies
+	refreshed once per transaction for the terms touched. The JSON file holds exactly the
+	canonical bytes in all three languages, so the three write the same amount of data.
+	SQLite runs with a write-ahead log, \texttt{synchronous=NORMAL} and a 256~MiB page
+	cache. None of these choices changes the content of the index --- the canonical hash is
+	the same --- but they keep the measurements about the data structures rather than about
+	avoidable overheads in our code; they are part of the specification, so every language
+	follows them. The SQLite driver differs between languages: Python and Node.js use the C
+	library, while Go uses \texttt{modernc.org/sqlite}, a translation of SQLite into Go that
+	avoids a C compiler but is slower.
+
+	\subsection{Metadata Datamart}
+
+	Header fields are parsed into one SQLite table with indexes on author, language and
+	title, the fields the benchmark queries filter on. The parsing rules are fixed in the
+	specification because each of them caused a divergence between languages during
+	development: fields start only at column~0 with a known name; an indented line continues
+	the current field, and blank lines do not end it, because in some Gutenberg files the
+	lines of a long field are separated by empty lines; the release date is a single line, and the
+	indented ``Most recently updated'' line under it is ignored; month names come from a
+	fixed English table, never from a locale-dependent date parser; languages are mapped to
+	ISO~639-1 codes through a shared file.
+
+	The ingestion instant of a book is recorded once, in a small receipt written when the
+	book enters the datalake (\texttt{control/ingestion/<layout>/<id>.json}), and is the only
+	source of the \texttt{ingested\_at} field. Rebuilding the metadata therefore always
+	gives the same record, whatever the layout and whenever it is run, and the book
+	layout's \texttt{meta.json} is written at ingestion time from the same record.
+
+	Comparing alternative metadata stores is optional in the brief and was not done: the
+	metadata stays in SQLite, and its build time and query time are measured instead.
+
+	\subsection{Control Layer}
+
+	The pipeline state lives in plain text files. A book is recorded as downloaded only
+	after its files and its receipt are durable, and as indexed only after the batch
+	containing it has been committed: a crash can therefore cause a book to be processed
+	twice, never to be lost, and processing it twice is harmless because re-indexing
+	replaces a book's postings instead of appending to them. \texttt{reconcile} rebuilds the
+	control files from what is actually on disk, and an operating-system file lock prevents
+	two runs on the same workspace --- a lock that disappears when the process dies, so a
+	killed run can always be restarted. Each step of the control loop moves one book one
+	stage forward, indexing pending books (smallest id first) before downloading the next
+	one in manifest order, so the three languages process the same books in the same order.
+
+	\subsection{How We Measure}
+
+	Measurements are taken on two layers. The \emph{macro} layer runs each CLI command as a
+	separate process, timed from outside with a monotonic clock, with peak memory taken by
+	\texttt{/usr/bin/time} on the child process --- never self-reported --- so every
+	language pays for its own runtime in the same way. Each command also reports its own
+	internal time, which excludes interpreter start-up: for operations that take a few
+	milliseconds, such as detecting new books, start-up (70--150~ms for Python) would
+	otherwise be most of the number. The \emph{micro} layer times operations of micro- to
+	milliseconds (lookup, index queries, metadata queries) inside the process with
+	pytest-benchmark.
+
+	Every configuration is run once as warm-up and then three times (the folder backend,
+	which takes about ten minutes per run, without warm-up); the workspace is
+	prepared outside the timer and the operating-system page cache is dropped before every
+	measured run. We report medians and interquartile ranges rather than means, because
+	background activity on a laptop produces occasional runs several times slower than the
+	median.
+
 	% ---------------------------------------------------------------------------
 	\section{Benchmarks and Results}
+	\label{sec:benchmarks}
 	% ---------------------------------------------------------------------------
 	\subsection{Dataset, Methods, and Measures}
 	
