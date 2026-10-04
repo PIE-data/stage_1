@@ -1,0 +1,41 @@
+[RUNNER] work dir /home/andrea/bench/work, 1000 GB free (inside WSL this is the virtual disk's limit; check the host drive too)
+=== E2 ===
+[RUNNER] E2 python time n=1000: 30 lookups done
+[RUNNER] E2 node time n=1000: 30 lookups done
+[RUNNER] E2 go time n=1000: 30 lookups done
+[RUNNER] E2 time n=1000: lookup paths identical in python, node, go
+[RUNNER] E2 python book n=1000: 30 lookups done
+[RUNNER] E2 node book n=1000: 30 lookups done
+[RUNNER] E2 go book n=1000: 30 lookups done
+[RUNNER] E2 book n=1000: lookup paths identical in python, node, go
+[RUNNER] E2 python hash n=1000: 30 lookups done
+[RUNNER] E2 node hash n=1000: 30 lookups done
+[RUNNER] E2 go hash n=1000: 30 lookups done
+[RUNNER] E2 hash n=1000: lookup paths identical in python, node, go
+=== E7 ===
+[RUNNER] E7 python json single n=1000: 10 queries done
+[RUNNER] E7 python json and2 n=1000: 10 queries done
+[RUNNER] E7 python json and3 n=1000: 10 queries done
+[RUNNER] E7 python json absent n=1000: 10 queries done
+[RUNNER] E7 node json single n=1000: 10 queries done
+[RUNNER] E7 node json and2 n=1000: 10 queries done
+[RUNNER] E7 node json and3 n=1000: 10 queries done
+[RUNNER] E7 node json absent n=1000: 10 queries done
+[RUNNER] E7 go json single n=1000: 10 queries done
+[RUNNER] E7 go json and2 n=1000: 10 queries done
+[RUNNER] E7 go json and3 n=1000: 10 queries done
+[RUNNER] E7 go json absent n=1000: 10 queries done
+[RUNNER] E7 python sqlite single n=1000: 10 queries done
+[RUNNER] E7 python sqlite and2 n=1000: 10 queries done
+[RUNNER] E7 python sqlite and3 n=1000: 10 queries done
+[RUNNER] E7 python sqlite absent n=1000: 10 queries done
+[RUNNER] E7 node sqlite single n=1000: 10 queries done
+[RUNNER] E7 node sqlite and2 n=1000: 10 queries done
+[RUNNER] E7 node sqlite and3 n=1000: 10 queries done
+[RUNNER] E7 node sqlite absent n=1000: 10 queries done
+[RUNNER] E7 go sqlite single n=1000: 10 queries done
+[RUNNER] E7 go sqlite and2 n=1000: 10 queries done
+[RUNNER] E7 go sqlite and3 n=1000: 10 queries done
+[RUNNER] E7 go sqlite absent n=1000: 10 queries done
+[RUNNER] E7 n=1000: all 40 queries give identical ids in every language and backend
+[RUNNER] summary -> /home/andrea/bench/stage_1/results/t1000-lookup-query/summary.csv
