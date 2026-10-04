@@ -193,7 +193,7 @@
 		\item \textbf{JSON:} one monolithic file at
 		\texttt{datamarts/inverted\_index.json}.
 		\item \textbf{Folder:} one file per term under
-		\texttt{datamarts/inverted\_index/<BUCKET>/<safe\_term>.txt}.
+		\path{datamarts/inverted_index/<BUCKET>/<safe_term>.txt}.
 		\item \textbf{SQLite:} an embedded B-tree database at
 		\texttt{datamarts/index.db}, using \texttt{terms} and \texttt{postings} tables.
 	\end{itemize}
@@ -207,7 +207,7 @@
 		\texttt{failed\_books.txt} records failures and their reasons.
 		\item \textbf{Concurrency lock:} \texttt{run.lock} prevents overlapping writers.
 		\item \textbf{Ingestion receipts:} JSON records under
-		\texttt{control/ingestion/<layout>/<id>.json} bind a book to its ingestion time and
+		\path{control/ingestion/<layout>/<id>.json} bind a book to its ingestion time and
 		final artifact paths.
 		\item \textbf{Reconciliation:} after a crash, the control state can be rebuilt from
 		complete datalake artifacts, allowing the pipeline to converge to a consistent state.
@@ -608,7 +608,7 @@
 	once the index is in memory.
 
 	A process that answers one query does not have the index in memory. Table~\ref{tab:query}
-	measures that case for the three languages: \texttt{query --mode and} through the CLI,
+	measures that case for the three languages: \texttt{query -{}-mode and} through the CLI,
 	the first 10 queries of each workload, one call per query with a cold page cache,
 	internal time. For every one of the 40 queries the three languages and both backends
 	returned exactly the same book ids. With JSON every query first has to read and parse the
