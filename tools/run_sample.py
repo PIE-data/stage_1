@@ -29,7 +29,7 @@ def main():
     )
     parser.add_argument(
         "--lang",
-        choices=["python", "node"],
+        choices=["python", "node", "go"],
         default="python",
         help="The language implementation to run.",
     )
@@ -39,10 +39,17 @@ def main():
         executable = shutil.which("node")
         if executable is None:
             parser.error("Node.js is required to run the Node sample.")
-        cli_script = REPO / "src" / "node" / "cli.js"
+        command = [executable, str(REPO / "src" / "node" / "cli.js")]
+    elif args.lang == "go":
+        if shutil.which("go") is None:
+            parser.error("Go is required to run the Go sample.")
+        binary = Path(tempfile.mkdtemp(prefix="stage1-go-")) / "engine"
+        print(f"Building the Go CLI into {binary}", flush=True)
+        subprocess.run(["go", "build", "-o", str(binary), "./cmd/engine"],
+                       cwd=REPO / "src" / "go", check=True)
+        command = [str(binary)]
     else:
-        executable = sys.executable
-        cli_script = REPO / "src" / "python" / "cli.py"
+        command = [sys.executable, str(REPO / "src" / "python" / "cli.py")]
 
     ids = [
         int(line)
@@ -75,8 +82,7 @@ def main():
         shutil.copyfile(SAMPLE / f"{book_id}.txt", raw / f"{book_id}.txt")
 
     engine = [
-        executable,
-        str(cli_script),
+        *command,
         "--workspace", str(workspace),
         "--datalake-layout", args.layout,
         "--index-backend", args.backend,
