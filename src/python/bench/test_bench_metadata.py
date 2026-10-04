@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from conftest import REPO, TIER, WORK, record
+from conftest import MIRROR, REPO, TIER, WORK, record
 
 PARAMS = REPO / "spec" / "queries" / "metadata_params.txt"
 PASSES = 5
@@ -62,22 +62,33 @@ def load_params() -> dict[str, list[str]]:
 
 
 @pytest.fixture(scope="session")
-def metadata_db(corpus, datalake):
-    """The tier's metadata database, built once from the hash datalake with
-    the Python reference code (outside the timer, kept between runs)."""
+def metadata_db(corpus):
+    """The tier's metadata database, built once (outside the timer, kept
+    between runs) from a hash-layout datalake of the tier.  Only the hash
+    layout is built here, not the three of the `datalake` fixture: at the
+    10 000-book tier the other two would cost minutes and gigabytes for
+    nothing -- the queries do not depend on the layout."""
+    from datalake.splitter import split_file
     from datamart.metadata import MetadataStore, build_metadata_record
     from pipeline import make_storage
+
+    lake = WORK / f"datalake-hash-{TIER}"
+    if not (lake / ".complete").exists():
+        storage = make_storage("hash", lake)
+        for book_id in corpus:
+            header, body = split_file(MIRROR / f"{book_id}.txt")
+            storage.write(book_id, header, body)
+        (lake / ".complete").write_text("ok\n")
 
     ws = WORK / f"metadata-{TIER}"
     marker = ws / ".complete"
     if not marker.exists():
-        source = make_storage("hash", datalake["hash"])
+        source = make_storage("hash", lake)
         stamp = datetime(2026, 1, 1, tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         records = []
         for book_id in corpus:
             header_path, body_path = source.lookup(book_id)
-            records.append(build_metadata_record(book_id, datalake["hash"],
-                                                 header_path, body_path, stamp))
+            records.append(build_metadata_record(book_id, lake, header_path, body_path, stamp))
         with MetadataStore(ws) as store:
             store.upsert(records, batch_size=500)
         marker.write_text("ok\n")

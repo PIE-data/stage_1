@@ -537,6 +537,101 @@ class Runner:
                         argv=cli(self.engines(lang), ws, "hash", backend, "index", "--all",
                                  "--positions"))
 
+    def one_run(self, *, experiment, lang, layout, backend, tier, argv, rep, aux=None):
+        """One measured CLI call (cache dropped first): returns (exit, stdout).
+        Records wall_time and, when the CLI reports it, wall_time_internal."""
+        metrics = self.work / ".metrics.jsonl"
+        metrics.unlink(missing_ok=True)
+        drop_system_caches(self.state)
+        code, wall, rss, err, out = run_measured(with_metrics_out(argv, metrics), self.env)
+        if code not in (0,):
+            raise RunFailed(f"{experiment} {lang}: exit {code}\n{err[-2000:]}")
+        inner = internal_wall_ms(metrics)
+        extra = {"peak_rss_bytes": rss, **(aux or {})}
+        self.record(experiment=experiment, metric="wall_time", value=wall, unit="ms", lang=lang,
+                    layout=layout, backend=backend, tier=tier, rep=rep, aux=extra)
+        if inner is not None:
+            self.record(experiment=experiment, metric="wall_time_internal", value=inner,
+                        unit="ms", lang=lang, layout=layout, backend=backend, tier=tier,
+                        rep=rep, aux=extra)
+        return out
+
+    def e2(self, tiers) -> None:
+        """Lookup cost for every language, through the CLI: `lookup --book-id`
+        resolves the paths through the layout and reads the body (SPEC §1.2).
+        --lookups ids drawn with the fixed seed, one cold-cache call each; the
+        internal time (no interpreter start-up) is the lookup itself.  The
+        micro-benchmark (Python only) measures the same with a warm cache."""
+        import random
+        for tier in tiers:
+            ids = random.Random(self.args.seed).sample(self.tier_ids(tier),
+                                                       min(self.args.lookups, len(self.tier_ids(tier))))
+            for layout in self.args.layouts:
+                ws = self.work / "ws"
+                copy_snapshot(self.datalake_snapshot(layout, tier), ws)
+                outputs: dict[str, str] = {}
+                for lang in self.args.languages:
+                    eng = self.engines(lang)
+                    run_setup(cli(eng, ws, layout, "json", "lookup", "--book-id", str(ids[0])),
+                              self.env)  # warm-up: loads the runtime once
+                    lines = []
+                    for rep, book_id in enumerate(ids, 1):
+                        lines.append(self.one_run(
+                            experiment="E2", lang=lang, layout=layout, backend=None,
+                            tier=tier, rep=rep,
+                            argv=cli(eng, ws, layout, "json", "lookup", "--book-id",
+                                     str(book_id))))
+                    outputs[lang] = "".join(lines)
+                    print(f"[RUNNER] E2 {lang} {layout} n={tier}: {len(ids)} lookups done",
+                          file=sys.stderr)
+                same = len(set(outputs.values())) == 1
+                print(f"[RUNNER] E2 {layout} n={tier}: lookup paths "
+                      f"{'identical' if same else 'DIFFERENT'} in {', '.join(outputs)}",
+                      file=sys.stderr)
+
+    def e7(self, tiers) -> None:
+        """Query cost for every language, through the CLI: `query --terms ...
+        --mode and` on the indexed tier, the first --queries-per-workload
+        queries of each workload in spec/queries/.  One cold-cache call per
+        query: for json the internal time includes loading the index file,
+        which is what a query costs a process that does not keep the index in
+        memory.  The output of every query is compared across languages and
+        backends: SPEC §1.1 makes it byte-for-byte identical."""
+        workloads = ["single", "and2", "and3", "absent"]
+        for tier in tiers:
+            answers: dict[str, dict[str, set]] = {}
+            for backend in self.args.backends:
+                if backend == "folder":
+                    continue  # no folder index at this tier (hours to build)
+                for lang in self.args.languages:
+                    snap = self.indexed_snapshot(backend, tier, lang)
+                    eng = self.engines(lang)
+                    for workload in workloads:
+                        lines = [l.strip() for l in
+                                 (REPO / "spec" / "queries" / f"{workload}.txt").read_text().splitlines()
+                                 if l.strip()][:self.args.queries_per_workload]
+                        run_setup(cli(eng, snap, "hash", backend, "query", "--terms", lines[0],
+                                      "--mode", "and"), self.env)  # warm-up
+                        for rep, terms in enumerate(lines, 1):
+                            out = self.one_run(
+                                experiment=f"E7_{workload}", lang=lang, layout="hash",
+                                backend=backend, tier=tier, rep=rep,
+                                aux={"terms": terms},
+                                argv=cli(eng, snap, "hash", backend, "query", "--terms", terms,
+                                         "--mode", "and"))
+                            answers.setdefault(f"{workload}|{terms}", {}).setdefault(
+                                out, set()).add(f"{lang}/{backend}")
+                        print(f"[RUNNER] E7 {lang} {backend} {workload} n={tier}: "
+                              f"{len(lines)} queries done", file=sys.stderr)
+            differ = {k: v for k, v in answers.items() if len(v) > 1}
+            if differ:
+                for k, v in list(differ.items())[:5]:
+                    print(f"[RUNNER] WARNING E7 n={tier}: different answers for {k}: "
+                          f"{[sorted(x) for x in v.values()]}", file=sys.stderr)
+            else:
+                print(f"[RUNNER] E7 n={tier}: all {len(answers)} queries give identical ids "
+                      f"in every language and backend", file=sys.stderr)
+
     def e12(self, tiers) -> None:
         """Metadata datamart build -- the brief's "insertion speed" and, across
         tiers, its scalability: `metadata --all` on a downloaded tier,
@@ -652,13 +747,17 @@ class Runner:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Stage 1 benchmark runner")
     ap.add_argument("--experiments", default="E1,E3,E4,E5,E6,E8",
-                    help="comma list of E1,E3,E4,E5,E6,E8,E10,E11,E12")
+                    help="comma list of E1,E2,E3,E4,E5,E6,E7,E8,E10,E11,E12")
     ap.add_argument("--languages", default="python")
     ap.add_argument("--layouts", default=",".join(LAYOUTS))
     ap.add_argument("--backends", default=",".join(BACKENDS))
     ap.add_argument("--tiers", default="100,1000")
     ap.add_argument("--scaling-tiers", default="100,1000,10000", help="for E10 and E11")
     ap.add_argument("--workers", default="1,8")
+    ap.add_argument("--lookups", type=int, default=30, help="E2: book ids looked up")
+    ap.add_argument("--queries-per-workload", type=int, default=10,
+                    help="E7: queries taken from each spec/queries/ workload")
+    ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--meta-batch-sizes", default="1,500",
                     help="E12: metadata --batch-size values (500 = default, 1 = per-row commit)")
     ap.add_argument("--reps", type=int, default=5)
@@ -700,6 +799,8 @@ def main() -> int:
              "E8": lambda: runner.e8(tiers),
              "E10": lambda: runner.e1(scaling, "E10", [1]),
              "E11": lambda: runner.e6(scaling, "E11"),
+             "E2": lambda: runner.e2(tiers),
+             "E7": lambda: runner.e7(tiers),
              "E12": lambda: runner.e12(tiers)}[exp]()
     except RunFailed as exc:
         print(f"[RUNNER] FAILED: {exc}", file=sys.stderr)
