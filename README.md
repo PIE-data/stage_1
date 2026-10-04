@@ -8,6 +8,8 @@ After installing the prerequisites and Node dependencies below, run from the rep
 python tools/run_sample.py --lang python
 # OR
 python tools/run_sample.py --lang node
+# OR (builds the Go CLI first)
+python tools/run_sample.py --lang go
 ```
 
 The demo uses three committed Gutenberg books from `data/sample/`.
@@ -53,12 +55,12 @@ not be compared with `spec/golden/expected.sha256`.
 The required specification version is stored in `spec/SPEC_VERSION`.
 A CLI refuses to run if its supported version differs.
 
-The offline demo can invoke either the Python or Node implementation. It uses
+Python (reference), Node.js and Go implement the same command-line interface
+(SPEC §1): `download`, `split`, `metadata`, `index`, `query`, `lookup`,
+`scan-new`, `control-step`, `reconcile`, `export-canonical`. All three pass the
+conformance gate in every backend and layout (27/27 cells, tag
+`conformance-green`). The offline demo can run any of the three; it uses
 Python's standard library as a portable command runner.
-
-Python and Go are separate implementations. Their availability depends on
-the checked-out branch; do not assume that an unfinished port supports all
-commands merely because they appear in the specification.
 
 The Node metadata receipt rules and their current limitations are documented
 in [docs/NODE_INGESTION_PROPOSAL.md](docs/NODE_INGESTION_PROPOSAL.md).
@@ -120,23 +122,28 @@ python -m pip install requests pytest jsonschema
 
 ### Go
 
-Install Go 1.22 or newer, then run from the repository root:
+Install Go 1.26 (the version in `src/go/go.mod`), then run from the
+repository root:
 
 ```sh
 go -C src/go mod download
 go -C src/go test ./...
-go -C src/go build ./...
+go -C src/go build -o engine ./cmd/engine
 ```
 
 Dependency download requires network access unless the modules are already
-cached.
+cached. The CLI looks for `spec/` in the working directory and its parents,
+so run it from the repository:
 
-The current Go implementation on main contains the tokenizer library and
-its tests. It does not yet contain `cmd/engine`, so these commands do not
-produce a runnable pipeline CLI.
+```sh
+src/go/engine --workspace workspace --datalake-layout hash --index-backend sqlite \
+    split --book-id 8339
+src/go/engine --workspace workspace query --terms "says" --mode and
+```
 
-The Go offline demo and command walkthrough will be added when the `cmd/engine` CLI
-integration lands. Currently, only the tokenizer, datalake, and metadata libraries are implemented.
+Every command and flag is the same as in the Python and Node examples below.
+SQLite comes from `modernc.org/sqlite`, a pure-Go translation: no C compiler
+is needed.
 
 ## Python CLI
 
@@ -340,8 +347,7 @@ It does not download books from the public Gutenberg website.
 Unlike the sample demo, this check deliberately uses a local mirror to
 exercise the downloader.
 
-The script also accepts `python` or `go` as its first argument when that
-implementation is available and complete.
+The first argument can be `python`, `node` or `go`.
 
 GitHub Actions includes an implementation in the conformance matrix when
 `src/<language>/CONFORMANCE_READY` exists.
@@ -357,6 +363,46 @@ node tools/check_query_parity.mjs
 This compares raw query output bytes across all three index backends and
 the four committed query workloads. It also checks the golden export hashes.
 The folder runs can take several minutes.
+
+## Benchmarks
+
+Benchmarks run on Linux (WSL2 is fine) on an ext4 path under `~`, never on a
+Windows drive. They download from a local mirror of Project Gutenberg, not the
+live site. Details, protocol and every experiment: `src/benchmark/runner.py`
+(module docstring); results and how to read them: `results/results.md`.
+
+```sh
+# one minute, 15 golden books, checks the machinery
+python3 src/benchmark/runner.py --smoke
+
+# the real runs (mirror in infra/mirror; run `sudo -v` first so the
+# page cache can be dropped before each measured run)
+python3 src/benchmark/runner.py --languages python,node,go \
+    --experiments E1,E2,E3,E4,E5,E6,E7,E8 --tiers 1000 --backends json,sqlite \
+    --reps 3 --warmup 1 --results results/my-run
+python3 src/benchmark/runner.py --languages python,node,go \
+    --experiments E12 --tiers 100,1000 --results results/my-meta
+
+# micro-benchmarks inside Python (lookup, index queries, metadata queries)
+pip install pytest-benchmark
+BENCH_TIER=1000 python3 -m pytest src/python/bench --benchmark-only
+```
+
+| Experiment | Measures |
+|---|---|
+| E1 | download, split and store throughput (1 and 8 workers) |
+| E2 | lookup of a book by id |
+| E3 | detection of new books (`scan-new --since`) |
+| E4 | recovery after SIGKILL half-way through a download |
+| E5 | storage overhead per datalake layout |
+| E6 | index build time, peak memory, index size on disk |
+| E7 | query latency (single term, AND-2, AND-3, absent terms) |
+| E8 | index update: 50 books added to an indexed tier |
+| E12 | metadata database build (batch size 1 and 500) |
+| E13 | metadata queries Q1-Q4 of SPEC §5.4 (micro) |
+
+Each run writes `raw.jsonl` (one record per repetition, schema in
+`spec/schemas/metrics.schema.json`) and `summary.csv` (median and IQR).
 
 ## Exit codes
 
