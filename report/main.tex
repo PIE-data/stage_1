@@ -743,11 +743,37 @@
 	1; however, the difference is limited because much of the cost comes from reading bodies
 	and computing SHA-256 hashes rather than from inserting rows.
 	
-	Metadata query results also show the expected effect of indexes. Between 100 and 1,000
-	books, indexed lookups remain in the low-microsecond range. In contrast, the case-insensitive
-	\texttt{LIKE prefix\%} title query rises from 6.2 to 49.4~$\mu$s because SQLite scans the
-	table. A range formulation uses the title index and remains around 4~$\mu$s, but it is
-	case-sensitive and therefore is not semantically interchangeable with the original query.
+	The same experiments were repeated at 10\,000 books, as the brief asks for metadata
+	scalability ``from hundreds to tens of thousands''. Building the database then takes
+	about 25--32~s in Python (median of the internal time, batch size 500 and 1), and the
+	three languages again produce identical rows.
+
+	Metadata query results show the expected effect of indexes (Table~\ref{tab:metaq}).
+	From 100 to 10\,000 books, the lookups that use an index (by id, by author, the title
+	range) stay at 2--5~$\mu$s. The two queries that read every row grow with the corpus:
+	the language histogram (Q4) from 5.9 to 313~$\mu$s, and the case-insensitive
+	\texttt{LIKE prefix\%} title query (Q3) from 6.2 to 697~$\mu$s, because SQLite cannot use
+	the title index for it and scans the table. The range formulation uses the index and stays
+	around 4~$\mu$s, but it is case-sensitive and therefore not semantically interchangeable
+	with the original query.
+
+	\begin{table}[H]
+		\centering
+		\caption{Metadata queries (SPEC \S5.4), Python micro-benchmark: median latency ($\mu$s).}
+		\label{tab:metaq}
+		\small
+		\begin{tabular}{lrrr}
+			\toprule
+			\textbf{Query} & \textbf{100 books} & \textbf{1\,000} & \textbf{10\,000} \\
+			\midrule
+			Q2 body path by id & 1.8 & 2.1 & 2.0 \\
+			Q1 books by author & 2.5 & 3.9 & 4.8 \\
+			Q3\_range title prefix (index) & 2.4 & 4.1 & 4.1 \\
+			Q4 books per language & 5.9 & 32.3 & 313.0 \\
+			Q3 title \texttt{LIKE} prefix & 6.2 & 49.4 & 696.6 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
 	
 	\subsection{Results Compared with Expectations}
 	
@@ -772,9 +798,16 @@
 	sensitive to filesystem behavior.
 	
 	The corpus is English-only and the largest fully evaluated mandatory tier is 1,000 books.
-	The planned 10,000-book E10/E11 scaling run was not completed, and SQLite scalability
-	beyond the measured tier is therefore not established. The folder backend is measured only
-	at 100 books because its one-file-per-term design was already extremely slow at that size.
+	The inverted index was not measured at 10\,000 books (the planned E10/E11 runs), for
+	reasons that are themselves results. The JSON backend keeps the whole index in memory:
+	0.9--2.3~GB at 1\,000 books, so roughly ten times that at 10\,000, beyond the 10~GB given
+	to the virtual machine --- the run would have measured swapping, not the data structure.
+	The folder backend already needs 9--51 minutes for 100 books. SQLite would have fitted,
+	but at 15--20 minutes per build and three languages with repetitions it would have taken
+	several hours, which we spent on completing the three implementations and on the
+	cross-language lookup, query and metadata experiments. Index scalability is therefore
+	shown from 100 to 1\,000 books only; the metadata datamart, which is small, was measured
+	up to 10\,000.
 	
 	The local mirror deliberately removes WAN latency and Project Gutenberg rate limiting.
 	This improves reproducibility but means the ingestion benchmark does not represent

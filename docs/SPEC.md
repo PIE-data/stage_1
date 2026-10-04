@@ -4,7 +4,7 @@ This document is **normative**. If an implementation disagrees with it, the impl
 Any change requires a PR labelled `spec-change`, approved by all four members, and a bump of `SPEC_VERSION`.
 
 ```
-SPEC_VERSION = 1.1.8
+SPEC_VERSION = 1.1.9
 ```
 
 Every implementation prints its `SPEC_VERSION` under `<engine> version` and refuses to run if it does not
