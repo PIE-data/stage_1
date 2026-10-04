@@ -35,6 +35,12 @@
 \author{PIE data}
 \date{Academic Year 2026/2027}
 
+% Student IDs (cover page) -- the brief requires them.
+\newcommand{\IDMARCELA}{TODO}
+\newcommand{\IDANDREA}{TODO}
+\newcommand{\IDIVAN}{TODO}
+\newcommand{\IDMANUEL}{TODO}
+
 \begin{document}
 	
 	\pagenumbering{gobble}
@@ -69,11 +75,12 @@
 		{\large\bfseries Group members\par}
 		\vspace{0.45cm}
 		
-		\begin{tabular}{l}
-			Marcela Nieto-Kuczyńska \\
-			Andrea Patruno \\
-			Ivan Colella \\
-			Manuel Muñoz Roca \\
+		\begin{tabular}{ll}
+			\textbf{Name} & \textbf{Student ID} \\
+			Marcela Nieto-Kuczyńska & \IDMARCELA \\
+			Andrea Patruno & \IDANDREA \\
+			Ivan Colella & \IDIVAN \\
+			Manuel Muñoz Roca & \IDMANUEL \\
 		\end{tabular}
 		
 		\vfill
@@ -276,7 +283,8 @@
 
 	English books only, so that one stop-word list applies to the whole corpus. Fixed
 	manifests of 100, 1\,000 and 10\,000 books (\texttt{spec/corpus/}) give a factor of ten
-	between sizes; the measurements use 100 and 1\,000. Every benchmark downloads from a
+	between sizes; the datalake and index measurements use 100 and 1\,000 books, the metadata
+	measurements go up to 10\,000. Every benchmark downloads from a
 	local HTTP mirror of Project Gutenberg: against the live site we would be measuring
 	internet latency and its rate limiter, not our code.
 
@@ -380,9 +388,11 @@
 	language pays for its own runtime in the same way. Each command also reports its own
 	internal time, which excludes interpreter start-up: for operations that take a few
 	milliseconds, such as detecting new books, start-up (70--150~ms for Python) would
-	otherwise be most of the number. The \emph{micro} layer times operations of micro- to
-	milliseconds (lookup, index queries, metadata queries) inside the process with
-	pytest-benchmark.
+	otherwise be most of the number. Lookup and query are measured this way in all three
+	languages too, one call per book or per query, and the runner checks that every language
+	returns the same paths and the same book ids. The \emph{micro} layer times the same
+	operations, and the metadata queries, inside the Python process with pytest-benchmark,
+	with the index already in memory and a warm cache.
 
 	Every configuration is run once as warm-up and then three times (the folder backend,
 	which takes about ten minutes per run, without warm-up); the workspace is
@@ -478,9 +488,33 @@
 	The Python micro-benchmark in Figure~\ref{fig:f2} shows that direct lookup is cheapest
 	for the batch/prefix layout (median 75.6~$\mu$s), followed by the book layout
 	(87.4~$\mu$s). The time layout is substantially slower at 436.5~$\mu$s because lookup
-	requires a directory walk. Although E2 micro measurements are available only for Python,
-	the result exposes an architectural property of the layouts rather than merely a language
-	effect.
+	requires a directory walk.
+
+	Table~\ref{tab:lookup} compares the three languages on the same operation through the
+	command-line interface: \texttt{lookup} for 30 book ids drawn with a fixed seed, one
+	call per id with a cold page cache, timed by each CLI around the command (interpreter
+	start-up excluded). The three languages returned identical paths for every id. Go and
+	Node.js show the same ordering as the micro-benchmark --- batch/prefix fastest, time
+	2.6--3 times slower --- while in Python the layout differences are hidden by a fixed
+	cost of about 35~ms inside the command, largely the import of the pipeline modules,
+	which the CLI loads only when a command needs them; the micro-benchmark above, which excludes it, is the better view of the Python
+	layouts.
+
+	\begin{table}[H]
+		\centering
+		\caption{E2 lookup through the CLI, 1\,000 books: median internal time per lookup (ms), 30 lookups.}
+		\label{tab:lookup}
+		\small
+		\begin{tabular}{lrrr}
+			\toprule
+			\textbf{Layout} & \textbf{Python} & \textbf{Node.js} & \textbf{Go} \\
+			\midrule
+			time & 47.3 & 13.6 & 6.5 \\
+			book & 41.9 & 5.0 & 3.5 \\
+			batch/prefix (\texttt{hash}) & 41.3 & 4.4 & 2.5 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
 	
 	\begin{figure}[H]
 		\centering
@@ -513,7 +547,28 @@
 	Storage allocation is very similar for all three layouts. Figure~\ref{fig:f5} shows
 	approximately 391~MiB for the time layout, 393~MiB for batch/prefix, and 399~MiB for
 	book-based storage; the spread is below 2\%. Storage footprint therefore does not decide
-	the layout choice.
+	the layout choice. Table~\ref{tab:storage} adds the other quantities the brief asks for:
+	the number of files and directories of each layout and the control structures it needs.
+	The book layout has one more file per book (\texttt{meta.json}) and one directory per
+	book; the time layout has the fewest directories, one per ingestion hour. The control
+	structures are the same for every layout: the state files (downloaded, indexed and failed
+	books), the lock file and one ingestion receipt per book.
+
+	\begin{table}[H]
+		\centering
+		\caption{Storage overhead of the datalake layouts, 1\,000 books.}
+		\label{tab:storage}
+		\small
+		\begin{tabular}{lrrrr}
+			\toprule
+			\textbf{Layout} & \textbf{Files} & \textbf{Directories} & \textbf{Allocated} & \textbf{Control structures} \\
+			\midrule
+			time & 2\,000 & 11 & 390.9~MB & state files, lock, 1\,000 receipts \\
+			book & 3\,000 & 1\,001 & 399.0~MB & state files, lock, 1\,000 receipts \\
+			batch/prefix (\texttt{hash}) & 2\,000 & 563 & 393.1~MB & state files, lock, 1\,000 receipts \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
 	
 	\begin{figure}[H]
 		\centering
@@ -549,7 +604,38 @@
 	available for Python. JSON and SQLite are almost identical for a single-term query
 	(27.3 vs.\ 28.2~$\mu$s). SQLite is somewhat faster for the AND-2 and AND-3 workloads
 	(2.20 vs.\ 2.42~ms and 3.61 vs.\ 3.87~ms), while JSON is faster for the absent-term
-	workload (3.6 vs.\ 7.9~$\mu$s). Consequently, neither backend dominates every query type.
+	workload (3.6 vs.\ 7.9~$\mu$s). Consequently, neither backend dominates every query type
+	once the index is in memory.
+
+	A process that answers one query does not have the index in memory. Table~\ref{tab:query}
+	measures that case for the three languages: \texttt{query --mode and} through the CLI,
+	the first 10 queries of each workload, one call per query with a cold page cache,
+	internal time. For every one of the 40 queries the three languages and both backends
+	returned exactly the same book ids. With JSON every query first has to read and parse the
+	whole 278~MB index, so it costs 2.1~s in Go, 11~s in Node.js and 15~s in Python whatever
+	the query; SQLite reads only the rows of the terms involved and answers in 10--90~ms (the
+	Python figures include the same $\approx$35~ms of module imports as Table~\ref{tab:lookup}),
+	two to three orders of magnitude faster. This is the strongest argument for SQLite as the
+	default backend of a search engine that serves queries.
+
+	\begin{table}[H]
+		\centering
+		\caption{E7 query through the CLI, 1\,000 books: median internal time per query (ms), 10 queries per workload.}
+		\label{tab:query}
+		\small
+		\begin{tabular}{llrrrr}
+			\toprule
+			\textbf{Backend} & \textbf{Language} & \textbf{single} & \textbf{AND-2} & \textbf{AND-3} & \textbf{absent} \\
+			\midrule
+			JSON & Python & 15\,151 & 14\,786 & 14\,659 & 14\,479 \\
+			JSON & Node.js & 11\,091 & 11\,042 & 11\,255 & 11\,189 \\
+			JSON & Go & 2\,123 & 2\,018 & 2\,169 & 2\,076 \\
+			SQLite & Python & 45.7 & 54.7 & 89.8 & 23.9 \\
+			SQLite & Node.js & 33.8 & 37.9 & 53.0 & 17.5 \\
+			SQLite & Go & 25.4 & 30.8 & 40.5 & 9.6 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
 	
 	\begin{figure}[H]
 		\centering
@@ -575,6 +661,13 @@
 	configuration, Go JSON, is also the most memory-hungry at about 2254~MiB. Python SQLite
 	uses the least memory at about 451~MiB. Node SQLite uses about 762~MiB, substantially
 	less than Node JSON at about 1600~MiB.
+
+	On disk the picture is reversed: for 1\,000 books the JSON index takes 278~MB and the
+	SQLite database 500~MB, identical in size across the three languages (the JSON file is
+	byte-for-byte the same). SQLite stores the term again in every posting row (the primary key
+	is \texttt{(term, book\_id)}), keeps a secondary index on \texttt{book\_id} and leaves
+	free space in its B-tree pages; in exchange it can update a book without
+	rewriting the whole index.
 	
 	\begin{figure}[H]
 		\centering
@@ -596,19 +689,55 @@
 		\label{fig:f10}
 	\end{figure}
 	
+	\paragraph{Scalability from 100 to 1\,000 books.}
+	Table~\ref{tab:scaling} repeats index build and update at 100 books. Ten times more books
+	cost 8--15 times more build time: the postings grow with the text, while the vocabulary
+	grows more slowly, so no configuration degrades sharply. In the update experiment the
+	backends diverge: adding the same 50 books costs 1.9--3.2 times more with JSON on the
+	larger index, because the whole file is read and rewritten, and 1.6--2.1 times more with
+	SQLite, which only touches the rows of the new books and the counts of their terms; in
+	every language the JSON ratio is the higher one. At 100 books Go with SQLite is slower than Go with JSON (12.5 vs.\ 3.3~s), which
+	points to a fixed cost of the pure-Go SQLite driver rather than of the data structure.
+
+	\begin{table}[H]
+		\centering
+		\caption{Index build (E6) and update with 50 books (E8) at 100 and 1\,000 books: median wall time (s).}
+		\label{tab:scaling}
+		\small
+		\begin{tabular}{llrrrrrr}
+			\toprule
+			& & \multicolumn{3}{c}{\textbf{E6 build}} & \multicolumn{3}{c}{\textbf{E8 +50 books}} \\
+			\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+			\textbf{Backend} & \textbf{Language} & \textbf{100} & \textbf{1\,000} & \textbf{ratio} & \textbf{100} & \textbf{1\,000} & \textbf{ratio} \\
+			\midrule
+			JSON & Python & 8.9 & 109.5 & 12.3 & 11.0 & 26.4 & 2.4 \\
+			JSON & Node.js & 5.3 & 78.8 & 14.9 & 7.2 & 23.0 & 3.2 \\
+			JSON & Go & 3.3 & 29.4 & 9.0 & 4.5 & 8.6 & 1.9 \\
+			SQLite & Python & 10.3 & 118.9 & 11.5 & 12.4 & 26.3 & 2.1 \\
+			SQLite & Node.js & 6.8 & 79.4 & 11.6 & 7.6 & 12.9 & 1.7 \\
+			SQLite & Go & 12.5 & 97.5 & 7.8 & 12.1 & 19.3 & 1.6 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+
 	\paragraph{Folder backend and scalability limit.}
 	The folder backend exposes the cost of the one-file-per-term design. Even at only
 	100 books, E6 takes 523.5~s in Go, 584.8~s in Python, and 3084.9~s in Node.
 	Updating that index with 50 additional books takes 618.6~s, 672.3~s, and 2108.5~s,
 	respectively. This confirms the prediction that repeated small-file creation and fsync
-	calls would dominate the workload. Running the same backend at 1,000 or 10,000 books
+	calls would dominate the workload. The design is also expensive on disk: at 100 books the
+	folder index holds about 102\,000 term files with 20.7~MB of postings, but occupies
+	427~MB, because every small file takes at least one 4~KiB filesystem block --- twenty
+	times its content, against 26~MB for the JSON file and 46~MB for SQLite. Running the same backend at 1,000 or 10,000 books
 	would have required hours and potentially around a million files, so it was not pursued.
 	
 	\paragraph{Selected index backend.}
 	For the default Stage~1 configuration we select \textbf{SQLite}. JSON achieves the best
 	raw build and update times in Go, but it does so with high memory consumption and requires
-	rewriting a monolithic representation. SQLite provides more stable update semantics and
-	a much better memory profile in Python and Node. In particular, Node SQLite is almost as
+	rewriting a monolithic representation. SQLite provides more stable update semantics,
+	a much better memory profile in Python and Node, and answers a query without loading the
+	whole index --- 10--90~ms against 2--15~s for JSON in a fresh process
+	(Table~\ref{tab:query}). In particular, Node SQLite is almost as
 	fast as Node JSON for a full build, uses less than half the memory, and is substantially
 	faster for the 50-book update. Folder storage is rejected as the default because its
 	file-per-term durability strategy is already prohibitively slow at 100 books.
@@ -658,10 +787,29 @@
 	This improves reproducibility but means the ingestion benchmark does not represent
 	real-world Internet download time. The number of repetitions is also modest, so medians
 	and IQR reduce sensitivity to outliers but do not eliminate run-to-run uncertainty.
+
+	The laptop is a 15~W hybrid processor (2 performance and 8 efficiency cores) whose
+	scheduling is decided by Windows, outside the Linux virtual machine; long runs can be
+	throttled and a run can land on slow cores. The page cache is dropped inside Linux before
+	every measured run, but Windows keeps its own cache of the virtual disk, so a ``cold''
+	run is only partly cold. Both effects show up as occasional outliers, which is why medians
+	and interquartile ranges are reported.
+
+	Differences between languages are not only differences between runtimes. Go reaches
+	SQLite through \texttt{modernc.org/sqlite}, a translation of the C library into Go, while
+	Python and Node.js call the C library itself; part of the gap between Go and Node.js on
+	the SQLite backend is the driver. The independence of the three implementations is also
+	weaker than planned: parts of the Node.js JSON backend and of the Go command-line wiring
+	and batch indexing were completed by the author of the Python reference
+	(Section~\ref{sec:design}). Their equivalence is still verified --- identical canonical
+	hashes in all 27 configurations, identical metadata rows --- but some implementation
+	choices were shared rather than made independently.
 	
-	Finally, E2 lookup and E7 query micro-benchmarks are available only for Python, so those
-	figures should be interpreted primarily as comparisons between layouts/backends rather than
-	as cross-language results. SQLite is used in place of MongoDB, so conclusions about the
+	Finally, the warm-cache micro-benchmarks of lookup and query (Figures~\ref{fig:f2}
+	and~\ref{fig:f7}) exist only for Python; the cross-language comparison of the same
+	operations goes through the CLI (Tables~\ref{tab:lookup} and~\ref{tab:query}), where
+	the internal time still contains per-command costs such as Python's module imports.
+	SQLite is used in place of MongoDB, so conclusions about the
 	database-backed design apply to an embedded relational store rather than to distributed or
 	client-server databases.
 	
@@ -689,8 +837,8 @@
 	
 	Stage~2 can build ranking methods such as TF-IDF or BM25, phrase-aware queries, and richer
 	search functionality on top of the positional index already produced in Stage~1. Future
-	work should complete the 10,000-book scalability tier, add Node and Go micro-benchmarks
-	for lookup and query, investigate asynchronous/batched Node ingestion, evaluate a less
+	work should complete the 10,000-book scalability tier for the inverted index, run the
+	existing Go micro-benchmarks and add Node.js ones for lookup and query, investigate asynchronous/batched Node ingestion, evaluate a less
 	fsync-heavy folder-index update strategy, and test the selected designs on additional
 	hardware and filesystems.
 	
