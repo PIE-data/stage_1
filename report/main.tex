@@ -160,9 +160,9 @@
 	The system guarantees atomic writes and supports three mutually exclusive directory layouts:
 	\begin{itemize}
 		\item \textbf{Time-based layout:} artifacts are partitioned by UTC ingestion time:
-		\texttt{datalake/<YYYYMMDD>/<HH>/<id>.body.txt} and the corresponding header file.
+		\path{datalake/<YYYYMMDD>/<HH>/<id>.body.txt} and the corresponding header file.
 		\item \textbf{Book-based layout:} artifacts are grouped by book ID:
-		\texttt{datalake/books/<id>/body.txt}, \texttt{header.txt}, and \texttt{meta.json}.
+		\path{datalake/books/<id>/body.txt}, \path{header.txt}, and \path{meta.json}.
 		\item \textbf{Batch/prefix layout (CLI name \texttt{hash}):} artifacts are sharded
 		using the zero-padded six-digit decimal book ID, with
 		\texttt{id6[0:2]/id6[2:4]}. Despite the historical CLI name, this is a digit-prefix
