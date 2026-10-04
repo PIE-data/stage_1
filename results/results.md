@@ -22,7 +22,8 @@ column `batch_size`). Report medians + IQR. For short commands (E3) use the
 | E3 detection of new books (`scan-new --since`) | `t1000-py-node`, E3 rows only | `t1000-go` |
 | E4 recovery after SIGKILL | `t1000-datalake` | `t1000-go` |
 | E5 storage per layout | `t1000-datalake` | same bytes (E5 rows in `t1000-go` are identical) |
-| E2 lookup, E3 scan (micro) | `micro.jsonl`, `micro-pytest.json` (Python only) | - |
+| E2 lookup through the CLI (30 ids, cold cache) | `t1000-lookup-query` | `t1000-lookup-query` |
+| E2 lookup, E3 scan (micro, warm cache) | `micro.jsonl`, `micro-pytest.json` (Python only) | - |
 
 ## Inverted index (E6 build, E8 +50 books, E7 query)
 
@@ -32,9 +33,10 @@ column `batch_size`). Report medians + IQR. For short commands (E3) use the
 | E6 sqlite, 1000 books | `t1000-py-sqlite` | `t1000-py-node-e6e8` | `t1000-go-e6e8` |
 | E8 json, 1000 books | `t1000-py-node-e8` | `t1000-py-node-e8` | `t1000-go-e6e8` |
 | E8 sqlite, 1000 books | `t1000-py-sqlite` | `t1000-py-node-e8` | `t1000-go-e6e8` |
-| E6/E8 json + sqlite, 100 books | `t100` | `t100` | - |
+| E6/E8 json + sqlite, 100 books | `t100` | `t100` | `t100-go` |
 | E6/E8 folder, 100 books | `t100-folder` | `t100-folder` | `t100-folder-go` |
-| E7 query (micro) | `micro.jsonl` | - | - |
+| E7 query through the CLI (10 queries per workload, cold cache) | `t1000-lookup-query` | `t1000-lookup-query` | `t1000-lookup-query` |
+| E7 query (micro, index in memory) | `micro.jsonl` | - | - |
 
 Ignore: Python sqlite rows in `t1000-py-node-e6e8` and `t1000-py-node-e8`, and
 E6 rows in `t1000-py-node` (older runs, superseded by `t1000-py-sqlite` and
@@ -73,5 +75,13 @@ both tiers).
   (case-insensitive LIKE cannot use the BINARY title index). Q3_range (4 us)
   shows what the index would give; it is case-sensitive, so it is not a
   drop-in replacement for Q3.
+
+- E2 through the CLI (internal time, ms): Go 2.5 (hash) / 3.5 (book) / 6.5 (time),
+  Node 4.4 / 5.0 / 13.6, Python ~41-47 (about 35 ms of module imports inside the
+  command). Paths identical in the three languages.
+- E7 through the CLI: JSON 2.1 s (Go) / 11 s (Node) / 15 s (Python) per query, the
+  cost of loading the whole index; SQLite 10-90 ms. All 40 queries return the same ids
+  in every language and backend.
+- 100 -> 1000 books: build x8-15; update with 50 books x1.9-3.2 (JSON), x1.6-2.1 (SQLite).
 
 Not measured: sqlite at 10 000 books (E10/E11 scaling) -- declared as a limit.
