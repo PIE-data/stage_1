@@ -18,9 +18,11 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning, arrows.meta, shapes.geometric, calc}
 
-% Slightly more breathing room between paragraphs.
 \setlength{\parskip}{0.75em}
 \setlength{\parindent}{0pt}
+
+% Works whether LaTeX is launched from the repository root or report/.
+\graphicspath{{report/figures/}{figures/}}
 
 \hypersetup{
 	colorlinks=true,
@@ -84,6 +86,9 @@
 	\clearpage
 	\pagenumbering{arabic}
 	
+	% The course brief numbers the introduction as Section 2.
+	\setcounter{section}{1}
+	
 	% ---------------------------------------------------------------------------
 	\section{Introduction and Objectives}
 	% ---------------------------------------------------------------------------
@@ -110,75 +115,95 @@
 	pipeline restartable and idempotent. This foundation will be reused in Stage~2 for
 	ranking, phrase queries, and more advanced search functionality.
 	
-    % ---------------------------------------------------------------------------
+	% ---------------------------------------------------------------------------
 	\section{System Architecture}
 	\label{sec:architecture}
 	% ---------------------------------------------------------------------------
-	The system architecture is structured into three distinct physical and logical layers: the Datalake (raw artifact storage), the Datamarts (structured metadata and indices), and the Control Layer (state tracking and concurrency). The following diagram illustrates the data flow through the pipeline, from external ingestion to querying, with the control layer guiding the execution state.
-
-	\begin{figure}[htbp]
+	The system architecture is structured into three distinct physical and logical layers:
+	the Datalake (raw artifact storage), the Datamarts (structured metadata and indices),
+	and the Control Layer (state tracking and concurrency). Figure~\ref{fig:pipeline}
+	illustrates the data flow from ingestion to querying.
+	
+	\begin{figure}[H]
 		\centering
-		\begin{tikzpicture}[
-			node distance=1cm and 1.5cm,
-			box/.style={draw, rectangle, minimum width=2.2cm, minimum height=1cm, align=center, fill=blue!5},
-			ctrl/.style={draw, dashed, rectangle, minimum width=10cm, minimum height=1cm, align=center, fill=gray!10},
-			arrow/.style={->, >=stealth, thick}
-		]
-
-		% Main Pipeline
-		\node[box] (download) {Download};
-		\node[box, right=of download] (split) {Split};
-		\node[box, right=of split] (datalake) {Datalake};
-		\node[box, right=of datalake] (datamart) {Metadata / Index};
-		\node[box, right=of datamart] (query) {Query};
-
-		% Control Layer
-		\node[ctrl, below=of datalake] (control) {Control Layer (run.lock, receipts, tracking lists)};
-
-		% Pipeline Arrows
-		\draw[arrow] (download) -- (split);
-		\draw[arrow] (split) -- (datalake);
-		\draw[arrow] (datalake) -- (datamart);
-		\draw[arrow] (datamart) -- (query);
-
-		% Control Interactions (Dashed)
-		\draw[arrow, dashed, <->] (control.west) -| (download);
-		\draw[arrow, dashed, <->] (control) -- (datalake);
-		\draw[arrow, dashed, <->] (control.east) -| (datamart);
-
-		\end{tikzpicture}
+		\resizebox{0.94\textwidth}{!}{%
+			\begin{tikzpicture}[
+				node distance=1cm and 1.5cm,
+				box/.style={draw, rectangle, minimum width=2.2cm, minimum height=1cm, align=center, fill=blue!5},
+				ctrl/.style={draw, dashed, rectangle, minimum width=10cm, minimum height=1cm, align=center, fill=gray!10},
+				arrow/.style={->, >=stealth, thick}
+				]
+				\node[box] (download) {Download};
+				\node[box, right=of download] (split) {Split};
+				\node[box, right=of split] (datalake) {Datalake};
+				\node[box, right=of datalake] (datamart) {Metadata / Index};
+				\node[box, right=of datamart] (query) {Query};
+				
+				\node[ctrl, below=of datalake] (control)
+				{Control Layer (run.lock, receipts, tracking lists)};
+				
+				\draw[arrow] (download) -- (split);
+				\draw[arrow] (split) -- (datalake);
+				\draw[arrow] (datalake) -- (datamart);
+				\draw[arrow] (datamart) -- (query);
+				
+				\draw[arrow, dashed, <->] (control.west) -| (download);
+				\draw[arrow, dashed, <->] (control) -- (datalake);
+				\draw[arrow, dashed, <->] (control.east) -| (datamart);
+		\end{tikzpicture}}
 		\caption{System pipeline and Control Layer interaction.}
 		\label{fig:pipeline}
 	\end{figure}
-
+	
 	\subsection{Datalake}
-	The Datalake stores the raw, split artifacts resulting from the ingestion of Gutenberg books. The system guarantees atomic writes for all artifacts and supports three mutually exclusive directory layouts:
+	The Datalake stores the split artifacts resulting from the ingestion of Gutenberg books.
+	The system guarantees atomic writes and supports three mutually exclusive directory layouts:
 	\begin{itemize}
-		\item \textbf{Time-based layout:} Artifacts are partitioned by their UTC ingestion instant. The resulting paths are \texttt{datalake/<YYYYMMDD>/<HH>/<id>.body.txt} and \texttt{<id>.header.txt}.
-		\item \textbf{Book-based layout:} Artifacts are grouped by book ID. The paths are \texttt{datalake/books/<id>/body.txt} and \texttt{header.txt}. Additionally, this layout stores a self-describing \texttt{meta.json} file alongside the text artifacts.
-		\item \textbf{Hash-based layout:} Artifacts are sharded using the zero-padded 6-digit decimal representation of the book ID (\texttt{id6}). The paths isolate the first two and second two digits: \texttt{datalake/<id6[0:2]>/<id6[2:4]>/<id>.body.txt} and \texttt{<id>.header.txt}.
+		\item \textbf{Time-based layout:} artifacts are partitioned by UTC ingestion time:
+		\texttt{datalake/<YYYYMMDD>/<HH>/<id>.body.txt} and the corresponding header file.
+		\item \textbf{Book-based layout:} artifacts are grouped by book ID:
+		\texttt{datalake/books/<id>/body.txt}, \texttt{header.txt}, and \texttt{meta.json}.
+		\item \textbf{Batch/prefix layout (CLI name \texttt{hash}):} artifacts are sharded
+		using the zero-padded six-digit decimal book ID, with
+		\texttt{id6[0:2]/id6[2:4]}. Despite the historical CLI name, this is a digit-prefix
+		partitioning scheme, not a hash function.
 	\end{itemize}
-
+	
 	\subsection{Datamarts}
-	The Datamarts transform the raw datalake files into structured queryable formats, separating metadata from the inverted index.
-
+	The Datamarts transform the raw datalake files into structured queryable formats,
+	separating metadata from the inverted index.
+	
 	\paragraph{Metadata Store.}
-	The parsed header fields are stored in a centralized SQLite database located at \texttt{datamarts/metadata.db}. The database utilizes Write-Ahead Logging (WAL) and maintains a \texttt{books} table containing book identities, parsed author/title/language fields, paths relative to the workspace, file byte counts, and ingestion timestamps.
-
+	The parsed header fields are stored in a centralized SQLite database at
+	\texttt{datamarts/metadata.db}. The database uses Write-Ahead Logging (WAL) and stores
+	book identity, parsed title/author/language fields, workspace-relative paths, byte counts,
+	content hashes, and ingestion timestamps.
+	
 	\paragraph{Inverted Index Backends.}
-	The inverted index records token frequencies and positional data for the document corpus. The architecture implements three interchangeable storage backends:
+	The positional inverted index stores document IDs, term frequencies, and token positions.
+	Three interchangeable physical backends are implemented:
 	\begin{itemize}
-		\item \textbf{JSON (\texttt{json}):} A monolithic file at \texttt{datamarts/inverted\_index.json}. It acts as a single object mapping terms to their posting lists.
-		\item \textbf{Folder (\texttt{folder}):} A distributed directory structure where each term operates as an independent file: \texttt{datamarts/inverted\_index/<BUCKET>/<safe\_term>.txt}. The bucket is the uppercase first character of the term (or \texttt{\_}), and the filename is percent-encoded to prevent case-collision on diverse filesystems.
-		\item \textbf{SQLite (\texttt{sqlite}):} An embedded B-tree database at \texttt{datamarts/index.db} utilizing WAL mode. It contains a \texttt{terms} table for document frequencies and a \texttt{postings} table utilizing \texttt{WITHOUT ROWID} to store entries directly within the B-tree structure for optimization.
+		\item \textbf{JSON:} one monolithic file at
+		\texttt{datamarts/inverted\_index.json}.
+		\item \textbf{Folder:} one file per term under
+		\texttt{datamarts/inverted\_index/<BUCKET>/<safe\_term>.txt}.
+		\item \textbf{SQLite:} an embedded B-tree database at
+		\texttt{datamarts/index.db}, using \texttt{terms} and \texttt{postings} tables.
 	\end{itemize}
-
+	
 	\subsection{Control Layer}
-	The Control Layer strictly governs the execution state, pipeline resumption, and concurrency without relying on the physical presence of datalake artifacts. All control mechanisms reside within the \texttt{control/} directory:
+	The Control Layer governs execution state, restartability, and concurrency. All control
+	artifacts live under \texttt{control/}:
 	\begin{itemize}
-		\item \textbf{State Tracking Lists:} \texttt{downloaded\_books.txt} and \texttt{indexed\_books.txt} maintain ascending, newline-separated lists of successfully processed book IDs. \texttt{failed\_books.txt} tracks unprocessable books alongside their error reasons (e.g., \texttt{NO\_MARKERS}).
-		\item \textbf{Concurrency Lock:} \texttt{run.lock} provides a single-writer operating-system lock to safely prevent simultaneous modifications to the workspace by overlapping processes.
-		\item \textbf{Ingestion Receipts:} Small JSON records written to \texttt{control/ingestion/<layout>/<id>.json}. They durably bind a book to its UTC ingestion instant (\texttt{ingested\_at}) and its definitive header and body paths.
+		\item \textbf{State tracking lists:} \texttt{downloaded\_books.txt} and
+		\texttt{indexed\_books.txt} record successfully completed stages, while
+		\texttt{failed\_books.txt} records failures and their reasons.
+		\item \textbf{Concurrency lock:} \texttt{run.lock} prevents overlapping writers.
+		\item \textbf{Ingestion receipts:} JSON records under
+		\texttt{control/ingestion/<layout>/<id>.json} bind a book to its ingestion time and
+		final artifact paths.
+		\item \textbf{Reconciliation:} after a crash, the control state can be rebuilt from
+		complete datalake artifacts, allowing the pipeline to converge to a consistent state.
 	\end{itemize}
 	
 	% ---------------------------------------------------------------------------
@@ -188,57 +213,47 @@
 	amount of useful benchmarking that could be completed within the project schedule.
 	
 	\subsection{Programming Languages: Python, Node.js, and Go}
-	
 	Python serves as the reference implementation. Node.js and Go were selected as the two
 	additional languages because they provide meaningfully different runtime models while
-	remaining lightweight to build and execute. Python provides a familiar high-level
-	baseline, Node.js uses the V8 runtime and an event-driven execution model, and Go provides
-	a compiled implementation with lightweight concurrency. Using the same CLI contract
-	across all three keeps the benchmark comparison focused on implementation behavior.
+	remaining lightweight to build and execute. Python provides a high-level baseline,
+	Node.js uses V8 and an event-driven model, and Go provides a compiled implementation
+	with lightweight concurrency. A shared CLI and specification keep the comparison focused
+	on implementation behavior rather than semantics.
 	
 	\subsection{Index Backends: JSON, Folder, and SQLite}
+	The three index structures represent three distinct storage strategies: one large file,
+	many small files, and an embedded B-tree database. SQLite was chosen instead of MongoDB
+	because the project permits custom approaches, SQLite requires no external service, and
+	it is already used by the metadata datamart. This avoids introducing network and
+	service-management overhead into the mandatory comparison.
 	
-	The three mandatory index structures deliberately represent different physical storage
-	strategies: one large file, many small files, and an embedded B-tree database. SQLite was
-	chosen instead of MongoDB because the project brief permits custom index approaches,
-	SQLite requires no external service, and it is already used for the metadata datamart.
-	This avoids introducing network and service-management overhead into the mandatory
-	comparison.
-	
-	\subsection{English-only Corpus and Dataset Tiers}
-	
+	\subsection{English-only Corpus}
 	The benchmark corpus is restricted to English-language books so that all implementations
-	can use one fixed stop-word list and identical normalization rules. The planned corpus
-	sizes are 100, 1,000, and 10,000 books. These tiers allow both small controlled runs and
-	a scalability experiment that reaches the order of tens of thousands of documents.
+	can use one fixed stop-word list and identical normalization rules. Controlled benchmark
+	tiers of 100 and 1,000 books were completed. A planned 10,000-book scalability tier was
+	not completed and is treated explicitly as a limitation in Section~\ref{sec:threats}.
 	
 	\subsection{No Stemming}
-	
-	Stemming is intentionally excluded from Stage~1. Equivalent stemming libraries in Python,
-	Node.js, and Go are not guaranteed to produce byte-identical output for every token.
-	Because the project uses canonical export hashes as a strict conformance test, stemming
-	would introduce an unnecessary source of cross-language divergence. It can be revisited
-	in Stage~2 if the equivalence contract is extended accordingly.
+	Stemming is excluded from Stage~1. Equivalent stemming libraries in Python, Node.js,
+	and Go are not guaranteed to produce byte-identical output for every token. Because the
+	project uses canonical export hashes as a strict conformance test, stemming would add
+	an unnecessary source of cross-language divergence.
 	
 	\subsection{Word-level Positional Index}
-	
-	The inverted index stores term frequency and token positions in addition to document IDs.
-	This requires more storage than a record-level index, but it preserves information needed
-	for phrase queries and ranking algorithms such as TF-IDF or BM25 in the next stage.
+	The index stores term frequency and token positions in addition to document IDs. This
+	uses more storage than a record-level index, but it preserves information required for
+	phrase queries and later ranking methods such as TF-IDF or BM25.
 	
 	\subsection{Local Mirror for Benchmarks}
-	
 	All benchmark downloads use a local HTTP mirror instead of the live Project Gutenberg
-	service. Otherwise, measured ingestion time would be dominated by internet latency and
-	remote rate limiting rather than by the pipeline itself. A separate live-network run may
-	be reported as a sensitivity check, but it is not mixed with the controlled benchmark
-	results.
+	service. This removes internet latency and remote rate limiting from the primary
+	measurements so that the benchmark reflects the pipeline and storage design.
 	
-	\subsection{Metadata Comparison Out of Scope}
-	
-	The brief describes comparison of alternative metadata stores as optional. For Stage~1,
-	metadata is therefore kept in SQLite and benchmarking effort is concentrated on the two
-	mandatory experimental dimensions: datalake layout and inverted-index structure.
+	\subsection{Metadata Store}
+	Alternative metadata databases were optional, so the project keeps SQLite as the metadata
+	store rather than comparing multiple metadata technologies. The implemented metadata
+	pipeline was nevertheless benchmarked for build and query behavior as a supplementary
+	check of the datamart.
 	
 	% ---------------------------------------------------------------------------
 	\section{Benchmarks and Results}
@@ -254,11 +269,12 @@
 			\toprule
 			\textbf{Dataset} & \textbf{Method} & \textbf{Measures} \\
 			\midrule
+			
 			20-book golden corpus
 			&
-			Python, Node.js, and Go; all mandatory index backends
+			Python, Node.js, and Go; common specification and canonical export
 			&
-			Canonical-export equality and conformance checks
+			Cross-language and cross-backend conformance
 			\\[0.4em]
 			
 			1,000-book English corpus
@@ -271,59 +287,274 @@
 			
 			1,000-book English corpus
 			&
-			Language $\times$ index backend: JSON, folder, SQLite
+			Language $\times$ index backend: JSON and SQLite
 			&
-			Indexing time; query latency; update time; peak RSS; on-disk size; file count
+			Index-build time; update time; peak RSS; time--memory trade-off
 			\\[0.4em]
 			
-			100 / 1,000 / 10,000 books
+			100-book English corpus
 			&
-			Scaling runs for datalake layouts and index backends
+			Language $\times$ folder index backend
 			&
-			Change in wall time, memory/disk footprint, and scalability trend
+			Index-build and update cost; used to establish the practical limit of
+			the one-file-per-term design
+			\\[0.4em]
+			
+			100 / 1,000 books
+			&
+			SQLite metadata build and metadata-query benchmark
+			&
+			Build latency; query latency; query plan behavior
 			\\
 			\bottomrule
 		\end{tabularx}
 	\end{table}
 	
-	The benchmark protocol uses the same inputs and preprocessing rules for every language.
-	Macro measurements time complete CLI commands from outside the process so that process
-	startup and I/O are treated consistently. Short operations such as lookup and query are
-	measured with language-specific micro-benchmark frameworks and normalized into a common
-	metrics schema. Runs use a local mirror, a clean workspace, repeated measurements, and
-	median/IQR summaries.
+	The primary benchmark machine was an MSI laptop with an Intel i7-1255U, 16~GB RAM
+	(10~GiB assigned to WSL2), NVMe SSD, and Ubuntu on WSL2 with an ext4 benchmark
+	workspace. Python 3.14, Node 22, and Go 1.26 were used. All downloads came from the
+	local mirror.
 	
-	\subsection{Results}
+	Whole CLI commands are measured by the external macro runner so that process startup,
+	I/O, and child-process memory are captured consistently across languages. Operations too
+	short for meaningful process-level timing---datalake lookup and query---use an internal
+	micro-benchmark layer. Results are reported using medians and IQR rather than means and
+	standard deviations because the distributions are right-skewed.
 	
-	\emph{TODO after the final benchmark run: insert the generated figures from
-		\texttt{report/figures/} and discuss the measured differences between languages,
-		datalake layouts, and index backends. The final text should identify the selected
-		datalake layout and explain that choice using the benchmark results.}
+	\subsection{Datalake Results}
+	
+	Figure~\ref{fig:f1} shows download and write throughput for 1,000 books. Python and Go
+	benefit strongly from increasing the worker count from one to eight. Go improves from
+	approximately 42~s to 9.6--11.1~s depending on the layout, while Python improves from
+	approximately 43--49~s to 14--16~s. Node remains around 67--80~s and receives little or
+	no benefit from eight workers. This contradicted the natural expectation that additional
+	workers would improve all three implementations; inspection of the implementation
+	indicates that synchronous filesystem writes serialize work on Node's event loop.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F1_download_throughput.png}
+		\caption{F1: download and write throughput for 1,000 books.}
+		\label{fig:f1}
+	\end{figure}
+	
+	The Python micro-benchmark in Figure~\ref{fig:f2} shows that direct lookup is cheapest
+	for the batch/prefix layout (median 75.6~$\mu$s), followed by the book layout
+	(87.4~$\mu$s). The time layout is substantially slower at 436.5~$\mu$s because lookup
+	requires a directory walk. Although E2 micro measurements are available only for Python,
+	the result exposes an architectural property of the layouts rather than merely a language
+	effect.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.88\textwidth]{F2_lookup_latency.png}
+		\caption{F2: datalake lookup latency (Python micro-benchmark).}
+		\label{fig:f2}
+	\end{figure}
+	
+	Figure~\ref{fig:f3} compares incremental detection. The time-based layout is particularly
+	efficient when the ingestion timestamp can narrow the scan, while the prefix and book
+	layouts trade some scan cost for predictable direct lookup. Figure~\ref{fig:f4} evaluates
+	recovery after a forced termination. All tested language/layout combinations recovered
+	without losing or duplicating books, which is more important for this experiment than the
+	small performance differences between layouts.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F3_incremental.png}
+		\caption{F3: incremental detection cost after adding 50 books.}
+		\label{fig:f3}
+	\end{figure}
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F4_recovery.png}
+		\caption{F4: recovery time after SIGKILL at approximately 50\% progress.}
+		\label{fig:f4}
+	\end{figure}
+	
+	Storage allocation is very similar for all three layouts. Figure~\ref{fig:f5} shows
+	approximately 391~MiB for the time layout, 393~MiB for batch/prefix, and 399~MiB for
+	book-based storage; the spread is below 2\%. Storage footprint therefore does not decide
+	the layout choice.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.86\textwidth]{F5_storage_overhead.png}
+		\caption{F5: allocated datalake storage for 1,000 books.}
+		\label{fig:f5}
+	\end{figure}
+	
+	\paragraph{Selected datalake layout.}
+	We select the \textbf{batch/prefix layout} (named \texttt{hash} in the CLI) as the
+	default. The time layout is attractive for incremental scans and slightly faster in some
+	throughput runs, but it makes direct lookup much more expensive because a book ID does
+	not identify its path. The book layout offers good lookup but creates one directory per
+	book and has the largest storage allocation. Batch/prefix gives the best measured lookup,
+	competitive parallel ingestion, bounded directory fan-out, and a deterministic path
+	derived directly from the book ID. It is therefore the strongest overall compromise.
+	
+	\subsection{Inverted-index Results}
+	
+	Figure~\ref{fig:f6} compares index construction over 1,000 books for JSON and SQLite.
+	Go with JSON is the fastest configuration at 29.4~s. Node takes 78.8~s with JSON and
+	79.4~s with SQLite. Python takes 109.5~s with JSON and 118.9~s with SQLite, while Go
+	with SQLite takes 97.5~s.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F6_index_build.png}
+		\caption{F6: index-build time for JSON and SQLite over 1,000 books.}
+		\label{fig:f6}
+	\end{figure}
+	
+	Query latency is shown in Figure~\ref{fig:f7}. These micro-benchmark results are currently
+	available for Python. JSON and SQLite are almost identical for a single-term query
+	(27.3 vs.\ 28.2~$\mu$s). SQLite is somewhat faster for the AND-2 and AND-3 workloads
+	(2.20 vs.\ 2.42~ms and 3.61 vs.\ 3.87~ms), while JSON is faster for the absent-term
+	workload (3.6 vs.\ 7.9~$\mu$s). Consequently, neither backend dominates every query type.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F7_query_latency.png}
+		\caption{F7: query latency by workload (Python micro-benchmark).}
+		\label{fig:f7}
+	\end{figure}
+	
+	For a 50-book update on top of the 1,000-book index, Figure~\ref{fig:f8} again shows
+	different trade-offs. Go JSON is fastest at 8.6~s, followed by Node SQLite at 12.9~s.
+	Go SQLite takes 19.3~s, Node JSON 23.0~s, and both Python configurations are about
+	26~s. The Node result is noteworthy because SQLite is substantially faster than JSON for
+	the update even though their full-build times are almost equal.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F8_update.png}
+		\caption{F8: update cost for 50 additional books.}
+		\label{fig:f8}
+	\end{figure}
+	
+	Peak memory during full index construction is shown in Figure~\ref{fig:f9}. The fastest
+	configuration, Go JSON, is also the most memory-hungry at about 2254~MiB. Python SQLite
+	uses the least memory at about 451~MiB. Node SQLite uses about 762~MiB, substantially
+	less than Node JSON at about 1600~MiB.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F9_peak_memory.png}
+		\caption{F9: peak RSS during index construction.}
+		\label{fig:f9}
+	\end{figure}
+	
+	Figure~\ref{fig:f10} combines build time and memory in a Pareto analysis. The measured
+	Pareto front contains Go JSON, Node JSON, Node SQLite, and Python SQLite. Go SQLite and
+	Python JSON are dominated because another measured configuration is both faster and more
+	memory efficient. This confirms that a single ``fastest'' result is not enough to choose
+	a backend.
+	
+	\begin{figure}[H]
+		\centering
+		\includegraphics[width=0.92\textwidth]{F10_time_memory_pareto.png}
+		\caption{F10: time--memory Pareto front for 1,000-book index construction.}
+		\label{fig:f10}
+	\end{figure}
+	
+	\paragraph{Folder backend and scalability limit.}
+	The folder backend exposes the cost of the one-file-per-term design. Even at only
+	100 books, E6 takes 523.5~s in Go, 584.8~s in Python, and 3084.9~s in Node.
+	Updating that index with 50 additional books takes 618.6~s, 672.3~s, and 2108.5~s,
+	respectively. This confirms the prediction that repeated small-file creation and fsync
+	calls would dominate the workload. Running the same backend at 1,000 or 10,000 books
+	would have required hours and potentially around a million files, so it was not pursued.
+	
+	\paragraph{Selected index backend.}
+	For the default Stage~1 configuration we select \textbf{SQLite}. JSON achieves the best
+	raw build and update times in Go, but it does so with high memory consumption and requires
+	rewriting a monolithic representation. SQLite provides more stable update semantics and
+	a much better memory profile in Python and Node. In particular, Node SQLite is almost as
+	fast as Node JSON for a full build, uses less than half the memory, and is substantially
+	faster for the 50-book update. Folder storage is rejected as the default because its
+	file-per-term durability strategy is already prohibitively slow at 100 books.
+	
+	\subsection{Supplementary Metadata Datamart Results}
+	
+	The SQLite metadata datamart was also tested as a supplementary experiment. At the
+	1,000-book tier, metadata construction remains on the order of a few seconds across the
+	three languages and layouts. Batch size 500 is generally modestly faster than batch size
+	1; however, the difference is limited because much of the cost comes from reading bodies
+	and computing SHA-256 hashes rather than from inserting rows.
+	
+	Metadata query results also show the expected effect of indexes. Between 100 and 1,000
+	books, indexed lookups remain in the low-microsecond range. In contrast, the case-insensitive
+	\texttt{LIKE prefix\%} title query rises from 6.2 to 49.4~$\mu$s because SQLite scans the
+	table. A range formulation uses the title index and remains around 4~$\mu$s, but it is
+	case-sensitive and therefore is not semantically interchangeable with the original query.
+	
+	\subsection{Results Compared with Expectations}
+	
+	Several results confirm the design expectations. The folder backend was expected to be
+	expensive because it performs one durable write per term; the benchmark confirms this
+	very strongly. SQLite was expected to trade some raw speed for structured updates and
+	lower memory use, which is also visible in the results.
+	
+	Two observations are more informative than the initial expectations. First, increasing
+	the worker count does not improve Node ingestion, unlike Python and Go; synchronous
+	filesystem work serializes enough of the Node path to eliminate the expected concurrency
+	benefit. Second, SQLite is not uniformly slower than JSON: Node SQLite is substantially
+	faster for the incremental index update. These contradictions are therefore explained by
+	the implementation and workload rather than treated as benchmark errors.
 	
 	\subsection{Threats to Validity}
+	\label{sec:threats}
 	
-	The final interpretation should explicitly account for the fact that measurements are
-	collected on one machine and one filesystem, the corpus is English-only, and even
-	10,000 books remain modest compared with production-scale search systems. The local
-	mirror intentionally removes internet variance, which improves repeatability but means
-	that the benchmark does not measure real-world WAN behavior. Results are summarized over
-	repeated runs, and the first run is treated as warm-up. SQLite is used as the third
-	mandatory index structure instead of MongoDB, so conclusions about database-backed
-	indexing are specific to an embedded relational store.
+	The results were collected on a single laptop, one NVMe SSD, one ext4 filesystem under
+	WSL2, and one set of runtime versions. Absolute timings therefore should not be generalized
+	to different hardware or filesystems. In particular, the folder backend is especially
+	sensitive to filesystem behavior.
+	
+	The corpus is English-only and the largest fully evaluated mandatory tier is 1,000 books.
+	The planned 10,000-book E10/E11 scaling run was not completed, and SQLite scalability
+	beyond the measured tier is therefore not established. The folder backend is measured only
+	at 100 books because its one-file-per-term design was already extremely slow at that size.
+	
+	The local mirror deliberately removes WAN latency and Project Gutenberg rate limiting.
+	This improves reproducibility but means the ingestion benchmark does not represent
+	real-world Internet download time. The number of repetitions is also modest, so medians
+	and IQR reduce sensitivity to outliers but do not eliminate run-to-run uncertainty.
+	
+	Finally, E2 lookup and E7 query micro-benchmarks are available only for Python, so those
+	figures should be interpreted primarily as comparisons between layouts/backends rather than
+	as cross-language results. SQLite is used in place of MongoDB, so conclusions about the
+	database-backed design apply to an embedded relational store rather than to distributed or
+	client-server databases.
 	
 	% ---------------------------------------------------------------------------
 	\section{Conclusions and Future Improvements}
 	% ---------------------------------------------------------------------------
-	Stage~1 establishes a common, reproducible data layer for the three implementations.
-	The final conclusion should identify which datalake layout and inverted-index backend
-	were selected after benchmarking and explain that choice using measured trade-offs
-	rather than implementation preference alone.
+	Stage~1 establishes a reproducible data layer shared by Python, Node.js, and Go. The
+	cross-language implementation uses the same data source, tokenizer rules, positional
+	index semantics, control state, and canonical output contract, allowing the benchmark to
+	compare storage and runtime choices rather than different functionality.
 	
-	The positional index already contains document frequencies, term frequencies, and token
-	positions needed by later search functionality. Stage~2 can therefore build ranking
-	methods such as TF-IDF or BM25 and phrase-aware queries on top of the existing storage
-	contract. Future work can also evaluate stemming, larger corpora, additional metadata
-	backends, distributed storage, and a REST/API layer once the Stage~1 conformance and
-	performance results are stable.
+	The measurements lead to two concrete default choices. For the datalake, the
+	\textbf{batch/prefix layout} provides the best overall balance: direct lookup is cheap,
+	parallel ingestion remains competitive, directory fan-out is bounded, and storage cost is
+	almost identical to the other layouts. For the inverted index, \textbf{SQLite} is selected
+	as the default because it provides a substantially better memory profile and robust update
+	behavior while retaining competitive performance. JSON remains attractive when raw speed
+	is the only objective, especially in Go, whereas the folder backend is not practical at
+	larger corpus sizes under the current durability strategy.
+	
+	The results also demonstrate why the three-language comparison is useful. Go with JSON
+	delivers the fastest index construction and update, Node SQLite provides a strong
+	time--memory compromise, and Python SQLite minimizes memory consumption. No single
+	language/backend combination dominates every resource dimension.
+	
+	Stage~2 can build ranking methods such as TF-IDF or BM25, phrase-aware queries, and richer
+	search functionality on top of the positional index already produced in Stage~1. Future
+	work should complete the 10,000-book scalability tier, add Node and Go micro-benchmarks
+	for lookup and query, investigate asynchronous/batched Node ingestion, evaluate a less
+	fsync-heavy folder-index update strategy, and test the selected designs on additional
+	hardware and filesystems.
 	
 \end{document}
