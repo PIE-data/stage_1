@@ -1,0 +1,20 @@
+[RUNNER] work dir /home/andrea/bench/work, 999 GB free (inside WSL this is the virtual disk's limit; check the host drive too)
+=== E6 ===
+[RUNNER] E6 go hash json n=100  warm-up    3072.0 ms
+[RUNNER] E6 go hash json n=100  rep 1    3087.3 ms  (inside 3025.9 ms)  rss 213 MiB
+[RUNNER] E6 go hash json n=100  rep 2    3371.6 ms  (inside 3313.8 ms)  rss 209 MiB
+[RUNNER] E6 go hash json n=100  rep 3    3277.2 ms  (inside 3190.0 ms)  rss 212 MiB
+[RUNNER] E6 go hash sqlite n=100  warm-up   12425.6 ms
+[RUNNER] E6 go hash sqlite n=100  rep 1   12489.4 ms  (inside 12407.0 ms)  rss 272 MiB
+[RUNNER] E6 go hash sqlite n=100  rep 2   12340.2 ms  (inside 12287.2 ms)  rss 270 MiB
+[RUNNER] E6 go hash sqlite n=100  rep 3   12587.4 ms  (inside 12523.1 ms)  rss 270 MiB
+=== E8 ===
+[RUNNER] E8 go hash json n=100  warm-up    4786.6 ms
+[RUNNER] E8 go hash json n=100  rep 1    4476.3 ms  (inside 4378.8 ms)  rss 399 MiB
+[RUNNER] E8 go hash json n=100  rep 2    4545.6 ms  (inside 4317.4 ms)  rss 400 MiB
+[RUNNER] E8 go hash json n=100  rep 3    4169.6 ms  (inside 4097.9 ms)  rss 409 MiB
+[RUNNER] E8 go hash sqlite n=100  warm-up    9736.4 ms
+[RUNNER] E8 go hash sqlite n=100  rep 1   12134.5 ms  (inside 12054.9 ms)  rss 323 MiB
+[RUNNER] E8 go hash sqlite n=100  rep 2   11754.4 ms  (inside 11693.0 ms)  rss 322 MiB
+[RUNNER] E8 go hash sqlite n=100  rep 3   12211.6 ms  (inside 12143.1 ms)  rss 319 MiB
+[RUNNER] summary -> /home/andrea/bench/stage_1/results/t100-go/summary.csv
