@@ -1,0 +1,44 @@
+[RUNNER] work dir /home/andrea/bench/work, 999 GB free (inside WSL this is the virtual disk's limit; check the host drive too)
+=== E12 ===
+[RUNNER] E12 python hash - n=10000 b=1  warm-up   38294.4 ms
+[RUNNER] E12 python hash - n=10000 b=1  rep 1   33707.3 ms  (inside 33020.2 ms)  rss 35 MiB
+[RUNNER] E12 python hash - n=10000 b=1  rep 2   32427.3 ms  (inside 32114.3 ms)  rss 35 MiB
+[RUNNER] E12 python hash - n=10000 b=1  rep 3   30641.0 ms  (inside 29894.2 ms)  rss 34 MiB
+[RUNNER] E12 python hash - n=10000 b=500  warm-up   34964.7 ms
+[RUNNER] E12 python hash - n=10000 b=500  rep 1   25371.7 ms  (inside 25049.9 ms)  rss 35 MiB
+[RUNNER] E12 python hash - n=10000 b=500  rep 2   22139.4 ms  (inside 21922.8 ms)  rss 35 MiB
+[RUNNER] E12 python hash - n=10000 b=500  rep 3  154213.0 ms  (inside 152118.2 ms)  rss 35 MiB
+[RUNNER] E12 node hash - n=10000 b=1  warm-up   41971.8 ms
+[RUNNER] E12 node hash - n=10000 b=1  rep 1   20817.3 ms  (inside 20109.4 ms)  rss 164 MiB
+[RUNNER] E12 node hash - n=10000 b=1  rep 2   17819.3 ms  (inside 17394.3 ms)  rss 163 MiB
+[RUNNER] E12 node hash - n=10000 b=1  rep 3   17217.4 ms  (inside 16804.1 ms)  rss 163 MiB
+[RUNNER] E12 node hash - n=10000 b=500  warm-up   19723.3 ms
+[RUNNER] E12 node hash - n=10000 b=500  rep 1   23320.4 ms  (inside 22822.4 ms)  rss 162 MiB
+[RUNNER] E12 node hash - n=10000 b=500  rep 2  135854.4 ms  (inside 131447.0 ms)  rss 165 MiB
+[RUNNER] E12 node hash - n=10000 b=500  rep 3  133806.9 ms  (inside 129218.3 ms)  rss 166 MiB
+[RUNNER] E12 go hash - n=10000 b=1  warm-up   35721.1 ms
+[RUNNER] E12 go hash - n=10000 b=1  rep 1   28152.8 ms  (inside 28087.1 ms)  rss 110 MiB
+[RUNNER] E12 go hash - n=10000 b=1  rep 2   25442.1 ms  (inside 25376.2 ms)  rss 110 MiB
+[RUNNER] E12 go hash - n=10000 b=1  rep 3   22040.8 ms  (inside 21999.9 ms)  rss 109 MiB
+[RUNNER] E12 go hash - n=10000 b=500  warm-up   27253.3 ms
+[RUNNER] E12 go hash - n=10000 b=500  rep 1   97035.8 ms  (inside 96908.1 ms)  rss 131 MiB
+[RUNNER] E12 go hash - n=10000 b=500  rep 2  173556.9 ms  (inside 173151.6 ms)  rss 107 MiB
+[RUNNER] E12 go hash - n=10000 b=500  rep 3   19464.0 ms  (inside 19381.0 ms)  rss 131 MiB
+[RUNNER] E12 hash n=10000: identical metadata rows in go, node, python
+[RUNNER] summary -> /home/andrea/bench/stage_1/results/t10000-meta/summary.csv
+.....                                                                    [100%]
+
+------------------------------------------------------------------------------------------------- benchmark: 5 tests -------------------------------------------------------------------------------------------------
+Name (time in us)                            Min                   Max                Mean              StdDev              Median                 IQR            Outliers  OPS (Kops/s)            Rounds  Iterations
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+test_bench_metadata_query[Q2]             1.7550 (1.0)        104.2470 (2.63)       2.4819 (1.0)        4.8198 (1.0)        1.9570 (1.0)        0.3095 (1.0)          6;47      402.9119 (1.0)         500           1
+test_bench_metadata_query[Q1]             3.4210 (1.95)        39.6360 (1.0)        7.0748 (2.85)       5.5898 (1.16)       4.7865 (2.45)       4.0440 (13.07)       59;51      141.3463 (0.35)        500           1
+test_bench_metadata_query[Q3_range]       3.5000 (1.99)        66.7380 (1.68)       5.7852 (2.33)       6.8841 (1.43)       4.0955 (2.09)       1.2045 (3.89)        18;62      172.8563 (0.43)        500           1
+test_bench_metadata_query[Q4]           294.0210 (167.53)     437.5290 (11.04)    316.3196 (127.45)    16.5856 (3.44)     313.0010 (159.94)    16.1505 (52.18)        38;8        3.1614 (0.01)        200           1
+test_bench_metadata_query[Q3]           596.7080 (340.00)   1,485.2740 (37.47)    722.7491 (291.20)   112.5511 (23.35)    696.6210 (355.96)   110.8615 (358.20)      67;27        1.3836 (0.00)        500           1
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Legend:
+  Outliers: 1 Standard Deviation from Mean; 1.5 IQR (InterQuartile Range) from 1st Quartile and 3rd Quartile.
+  OPS: Operations Per Second, computed as 1 / Mean
+5 passed in 267.91s (0:04:27)
